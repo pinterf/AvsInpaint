@@ -13,5 +13,6 @@ AvsInPaint v1.1 (20190624) by pinterf
 - (no new colorspaces)
 
 Links:
+https://forum.doom9.org/showthread.php?t=133682
 https://forum.doom9.org/showthread.php?p=1877879
 http://avisynth.nl/index.php/InpaintFunc
