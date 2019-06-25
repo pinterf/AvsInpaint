@@ -31,9 +31,14 @@
    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  **************************************************************/
 
+// 2008.02.23 - Original version
+// 20190624 
+// change to C 2.5 Plugins interface, AVS+ headers
+// change avs_is_yuy to avs_is_yuv (Function name changed, it is not the same as avs_is_yuy2!)
+// Add resource file for DLL versioning, version 1.1
 
-
-#define  VersionString  "2008.02.23"
+//#define  VersionString  "2008.02.23"
+#define  VersionString  "2019.06.24 1.1"
 #define  LegalInfoString  "* Logo Inpainting for AviSynth by Wolfgang Boiger *\nVersion " VersionString " ;  built  " __DATE__ "  " __TIME__ " .\nCopyright (C)  2007, 2008  Wolfgang Boiger, Berlin.\nLicensed under GNU GPL version 2 with possible geographic restrictions.\nThis software comes without any warranty, even without warranty\nof merchantability or fitness for a particular purpose.\nSee files 'AVSInpaint.htm' and 'GNUGPLv2.txt' for details."
 
 
@@ -266,7 +271,6 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   char * ErrorText;
   InpaintDataStruct * InpaintData;
 
-
   /* Create new filter */
   DestClip = avs_new_c_filter(Env,&FilterInfo,avs_array_elt(Args,0),1);
   if (!DestClip)  return  avs_new_value_error("InpaintLogo: Could not create filter");
@@ -360,7 +364,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       InpaintData->MaskFrameCount = 0;
     }
     GetFramePointers(0,0,0,0,Stride,0,0,MaskVideoInfo->pixel_type);
-    InpaintData->MaskChannelNo = avs_is_yuy(MaskVideoInfo)?0:3;
+    InpaintData->MaskChannelNo = avs_is_yuv(MaskVideoInfo)?0:3;
     InpaintData->FlipMask = (avs_is_rgb(VideoInfo)!=avs_is_rgb(MaskVideoInfo));
     InpaintData->MaskStride = Stride[InpaintData->MaskChannelNo];
     InpaintData->MaskPixelType = MaskVideoInfo->pixel_type;
@@ -386,7 +390,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     InpaintData->LumaRadiusX = Max(Radius/InpaintData->PixelWidth,InpaintMinRadiusXY);
     InpaintData->LumaRadiusY = Max(Radius/InpaintData->PixelHeight,InpaintMinRadiusXY);
     InpaintData->Sharpness = Sharpness;
-    InpaintData->ChromaTensor = ChromaTensor && InpaintData->ChromaChannelCount && avs_is_yuy(VideoInfo);
+    InpaintData->ChromaTensor = ChromaTensor && InpaintData->ChromaChannelCount && avs_is_yuv(VideoInfo);
     /** Initialize all blur kernel stuff **/
     InpaintData->LumaPreBlurXKernel = InpaintData->LumaPreBlurYKernel = InpaintData->ChromaPreBlurXKernel = InpaintData->ChromaPreBlurYKernel = 0;
     InpaintData->Luma4LumaPostBlurXKernel = InpaintData->Luma4LumaPostBlurYKernel = 0;
@@ -592,7 +596,6 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   BYTE * chiLuma, * chiChroma;
   float * GchiLuma, * GchiChroma;
   float * GchiuLuma, * GchiuChromas[MaxChannelCount], * GchiuChroma;
-
 
   InpaintData = (InpaintDataStruct*)FilterInfo->user_data;
   /* If the logo is dynamic, we prepare the mask stuff */
@@ -1029,7 +1032,8 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       /* Core function for static logos is called */
       if (0>DeblendStaticPrepare(DeblendData->StaticLogoDataChannels,DeblendData->StaticAlphaDataChannels,LogoFrame,AlphaFrame,LogoVideoInfo,AlphaVideoInfo))  ErrorText = "Deblend: Could not gather frame data pointers";
     }
-    if (AlphaFrame)  avs_release_video_frame(AlphaFrame);
+
+    if (AlphaFrame)  avs_release_video_frame(AlphaFrame); // fixed in v1.1
     if (LogoFrame)  avs_release_video_frame(LogoFrame);
     if (AlphaClip)  avs_release_clip(AlphaClip);
     if (LogoClip)  avs_release_clip(LogoClip);
@@ -1309,7 +1313,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   /* ...and get pointers to pixel data */
   if (!ErrorText)
   {
-    if (MaskClip && avs_is_yuy(MaskVideoInfo))
+    if (MaskClip && avs_is_yuv(MaskVideoInfo))
     {
       MaskData = avs_get_read_ptr_p(MaskFrame,AVS_PLANAR_Y);
       MaskPitch = avs_get_pitch_p(MaskFrame,AVS_PLANAR_Y);
@@ -1326,7 +1330,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   if (!ErrorText)
   {
     /* If one color space is YUV, the other RGB, we flip the mask so it fits the source */
-    if (MaskClip && ((!avs_is_yuy(SrcVideoInfo)) != (!avs_is_yuy(MaskVideoInfo))))
+    if (MaskClip && ((!avs_is_yuv(SrcVideoInfo)) != (!avs_is_yuv(MaskVideoInfo))))
     {
       MaskData += (SrcVideoInfo->height-1)*MaskPitch;
       MaskPitch *= -1;
@@ -2982,7 +2986,7 @@ signed long  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo
     for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum1[ChannelNo])  free(Sum1[ChannelNo]);
     return  Analyze_Result_DestFrameError;
   }
-  if (avs_is_yuy(SrcVideoInfo))
+  if (avs_is_yuv(SrcVideoInfo))
   {
     AlphaData = DestData[0]+Height*FramePitch[0];
     AlphaPitch = FramePitch[0];
@@ -3065,7 +3069,7 @@ signed long  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum1[ChannelNo])  free(Sum1[ChannelNo]);
   if (DestVideoInfo->height>SrcVideoInfo->height)
   {
-    if (avs_is_yuy(SrcVideoInfo))
+    if (avs_is_yuv(SrcVideoInfo))
     {
       /* Clear chroma of mask part */
       for (ChannelNo=1 ; ChannelNo<ChannelCount ; ChannelNo++)
