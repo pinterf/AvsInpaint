@@ -1029,7 +1029,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       /* Core function for static logos is called */
       if (0>DeblendStaticPrepare(DeblendData->StaticLogoDataChannels,DeblendData->StaticAlphaDataChannels,LogoFrame,AlphaFrame,LogoVideoInfo,AlphaVideoInfo))  ErrorText = "Deblend: Could not gather frame data pointers";
     }
-    if (AlphaFrame)  avs_release_video_frame(LogoFrame);
+    if (AlphaFrame)  avs_release_video_frame(AlphaFrame);
     if (LogoFrame)  avs_release_video_frame(LogoFrame);
     if (AlphaClip)  avs_release_clip(AlphaClip);
     if (LogoClip)  avs_release_clip(LogoClip);
