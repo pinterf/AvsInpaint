@@ -1,0 +1,1196 @@
+<html>
+ <head>
+  <title>Logo Inpainting</title>
+  <link rel="stylesheet" type="text/css" href="AviSynth.css">
+  <style type="text/css">
+   table         {border-collapse:collapse}
+   table tr      {vertical-align:top}
+   table td      {padding:0.5ex;border:thin dotted}
+   table th      {padding:0.5ex;border:thin dotted}
+   span#math     {font-family:sans-serif;font-size:120%;font-style:italic}
+   div#math      {font-family:sans-serif;font-size:135%;font-style:italic;text-align:center;margin:2ex}
+   span#math sup {font-size:70%}
+   span#math sub {font-size:70%}
+   div#math sup  {font-size:70%}
+   div#math sub  {font-size:70%}
+  </style>
+ </head>
+ <body>
+  <h2>Introduction</h2>
+   <h3>Abstract</h3>
+    <p>
+
+Image Inpainting is the art of restoring destroied parts of
+an image by using information of valid parts of the image
+in a way, so that the human eye does not recognize the
+damaged areas (at least not at a first sight).
+In video processing image inpainting is often applied to
+videos in order to remove TV station logos.
+
+This plugin comes with the intention
+to provide a suit for the removal of logos,
+whether opaque or transparent. It provides algorithms for
+these tasks:
+<ul>
+<li><b>Logo detection</b>: An obstacle is analyzed
+closely after being masked roughly by the user. The exact
+color map of the logo is determined as well as its alpha
+mask.</li>
+<li><b>Deblending</b>: Given the color image and alpha mask
+of an overlayed logo, the logo is removed where it is not
+opaque.</li>
+<li><b>Logo inpainting</b>: Opaque parts of the logo are
+interpolated. A fast method is used which has been
+published recently by
+Folkmar Bornemann and Tom M&auml;rz
+and which is roughly described
+<a href="#MathInpaint">below</a>.</li>
+</ul>
+
+Finally, a function for calculating the
+distance function of a mask is provided,
+which can be used to expand or inflate masks as well as
+to provide smooth blending masks.
+
+    </p>
+    <p>
+
+This plugin is designed to work with AviSynth 2.5.
+Supported color spaces are (generally) RGB24, RGB32, YUY2, YV12.
+
+    </p>
+   <h3>Terms and Conditions for Execution, Copying, Distribution and Modification</h3>
+    <p>
+     This program is free software; you can redistribute it and/or
+     modify it under the terms of the GNU General Public License
+     version 2, as published by the Free Software Foundation in
+     June 1991 (see '<a href="GNUGPLv2.txt">GNUGPLv2.txt</a>').
+    </p>
+    <p>
+     There is no guaranty that the rights of third parties
+     (including software patents) are not infringed upon by the
+     execution or distribution of this program.
+     Referring to section 8 of the General Public License, <b>any <i>use</i>
+     of this program (including all activities mentioned in
+     section 0 and including execution) is restricted to countries
+     where any of these activities do not infringe upon any such
+     rights of third parties. It lies with the user to verify the
+     compliance of his or her use (especially concerning but not
+     limited to distribution) of this program with the rights of
+     any third parties in the respective countries or regions.</b>
+    </p>
+    <p>
+     This program is distributed in the hope that it will be
+     useful, but <b>without any warranty</b>; without even the implied
+     warranty of <b>merchantability</b> or <b>fitness for a particular
+     purpose</b>.  See the GNU General Public License for more details.
+    </p>
+    <p>
+     You should have received a copy of the GNU General Public
+     License 2 along with this program; if not, write to the
+     <div align="center">
+      Free&nbsp;Software&nbsp;Foundation,&nbsp;Inc.,
+      <br>
+      51&nbsp;Franklin&nbsp;Street, Fifth&nbsp;Floor, Boston, MA&nbsp;02110-1301&nbsp;USA.
+     </div>
+    </p>
+   <font size=-2>
+    <p>
+     The mathematical formulars in this document require
+     a HTML 4.0 compatible browser to be displayed correctly.
+    </p>
+   </font>
+  <h2>Usage</h2>
+   <h3>Loading the plugin</h3>
+    <p>
+     You need the file
+     <strong>AVSInpaint.dll</strong> in your working directory. To
+     load the plugin, your script should start with
+     the following line:
+     <pre>
+LoadCPlugin("AVSInpaint.dll")</pre>
+    </p>
+   <h3>Inpaint Function</h3>
+    <p>
+     <code>InpaintLogo</code>(<var>clip Clip,
+                                   clip &quot;Mask&quot;,
+                                   float &quot;Radius&quot;,
+                                   float &quot;Sharpness&quot;,
+                                   float &quot;PreBlur&quot;,
+                                   float &quot;PostBlur&quot;,
+                                   float &quot;ChromaWeight&quot;,
+                                   float &quot;PreBlurSize&quot;,
+                                   float &quot;PostBlurSize&quot;,
+                                   bool &quot;ChromaTensor&quot;,
+                                   float &quot;PixelAspect&quot;,
+                                   int &quot;Steps&quot;</var>)
+    </p>
+    <p>
+    
+<code>InpaintLogo</code> restores masked parts of video frames
+by interpolation with non-masked parts of the frame.
+Each masked pixel will be inpainted by averaging surrounding
+pixels. The weights of this averaging are determined by
+calculating a special <i>structure tensor</i> that contains
+information about the directions of isophotes near that pixel.
+
+    </p>
+    <p>
+     <ul>
+      <li>
+
+<var>Clip</var> is the damaged source clip. All color spaces
+are allowed. If no <var>Mask</var> is provided, the source
+clip must be RGB32 and the alpha channel is used as mask
+(see <var>Mask</var> for details).
+Otherwise all color channels of <var>Clip</var> will be
+inpainted.
+The resulting clip will have the same properties as the source
+clip.
+
+      </li>
+      <li>
+
+<var>Mask</var> defines the parts of the video which will be
+treated by the plugin.
+This clip may either have a YUV colorspace (the Y channel is
+used) or RGB32 (the alpha channel is used).
+All pixels of the source clip where this mask has values
+greater than 127 will be inpainted.
+The mask clip must have the same (spatial) dimensions as
+the source clip.
+Moving logos are allowed: If the mask changes in time,
+the inpainted region in the source clip will change
+accordingly.
+If the logo is fixed (hence all mask frames are equal),
+the mask clip should be trimmed to one single frame
+indicating a static logo to the function. Since each
+movement of the inpainting region causes a lot new
+calculations, inpainting static logos is much faster.
+
+      </li>
+      <li>
+
+<var>Radius</var> describes the neighborhood of a damaged
+pixel from where values are taken when the pixel is
+inpainted. Bigger values prevent isophotes being
+inpainted in the wrong direction, but also
+create more blur.
+(default: 5.0&nbsp;Px)
+
+      </li>
+      <li>
+
+<var>Sharpness</var> describes how faithfull the algorithm
+follows directional information contained in the structure
+tensor. Higher values can prevent blurring caused by
+high <var>Radius</var> values. (default: 30.0)
+
+      </li>
+      <li>
+
+<var>PreBlur</var> is the standard deviation of the blur which
+is applied to the image before the structure tensor is
+computed.
+Higher values help connecting isophotes which have been
+cut by the inpainting region, but also increase
+CPU usage. <code><var>PreBlur</var>=0.0</code> disables
+pre-blurring. (default: 0.5 Px)
+
+      </li>
+      <li>
+
+<var>PostBlur</var> is the standard deviation of the blur which
+is applied to the structure tensors before they are used to
+determine the inpainting direction.
+Higher values help gathering enough directional information
+when there are only few valid pixels available, but also
+need lots of CPU cycles. (default: 4.0 Px)
+
+      </li>
+      <li>
+
+<var>ChromaWeight</var> describes how chroma channels
+are taken into account when the structure tensor
+is build.
+After tensors for each color channel are set up, tensors
+are added, where luma is weighted with
+<code>1.0-<var>ChromaWeight</var></code>,
+and all chroma tensors together with <var>ChromaWeight</var>.
+Tensors not needed are not computed.
+This parameter is ignored for RGB color spaces: Each channel
+is weighted equally then. (default: 0.0)
+
+      </li>
+      <li>
+
+<var>PreBlurSize</var> and <var>PostBlurSize</var>
+describe the sizes of the
+blurring kernels used for pre blurring and post blurring,
+respectively.
+(default: <code>2&times;<var>PreBlur</var></code>
+and <code>2&times;<var>PostBlur</var></code>, resp.)
+
+      </li>
+      <li>
+
+When <var>ChromaTensor</var> is set to <code>true</code>,
+all structure tensors will be computed <i>again</i>
+before a chroma channel pixel is inpainted (after the
+corresponding luma pixel has been inpainted).
+Chroma values are always inpainted after a luma value
+has been inpainted
+in the same position.
+This can be especially usefull when chroma channels have a
+lower resultion than luma channels (e.g. YUY2, YV12), i.e.
+the chroma pixel is not in exactly the same position
+in which the just inpainted luma pixel is.
+This argument is ignored for RGB color spaces.
+(default: <code>false</code>)
+
+      </li>
+      <li>
+
+<var>PixelAspect</var> is the ratio between
+width and height of a pixel. E.g. for 16:9 DVD movies
+with a resolution of 720x576, one would use
+<code><var>PixelAspect</var>=(16.0/9.0)*(576.0/720.0)</code>&asymp;1.422.
+This value
+distorts the circle defined by <var>Radius</var> as well
+as the blurring kernels and kernel extents and modifies the
+inpainting order of pixels.
+(default: 1.0)
+
+      </li>
+      <li>
+
+If <var>Steps</var> is non-negative, only the first
+<var>Steps</var> pixels (in the inpainting order which is
+determined by the distance of the pixels to the border of the
+inpainting region) are inpainted,
+all remaining pixels will be untouched. This
+is mainly usefull for visualizing how the function works and
+for debugging purposes. If <var>Steps</var> is less then -1,
+a copyright message will be displayed (along with an error
+message). (default: -1)
+
+      </li>
+     </ul>
+
+    </p>
+    <p>
+If the mask is provided as a separate clip (<var>Mask</var>
+argument), <i>all</i> color channels available in the
+source <var>Clip</var> will be inpainted, <i>including</i>
+the alpha
+channel, it the source is RGB32. In most cases this is
+not desired since it needs additional CPU time, and information
+from the alpha channel is also used for inpainting the
+color channels
+which might tamper the results. To avoid this, use
+<code>ConvertToRGB24</code> first when working with RGB32
+clips.
+
+    </p>
+    <p>
+
+The following table shows which combinations of color spaces
+are allowed and which color channels will be inpainted and
+returned.
+
+    </p>
+    <p align=center>
+
+<table>
+ <thead>
+  <tr>
+   <th align=left><var>Mask</var></th>
+   <th align=right width=1><var>Clip</var>:</th>
+   <th>RGB24</th>
+   <th>RGB32</th>
+   <th>YUY2 / YV12</th>
+  </tr>
+ </thead>
+ <tbody align=center>
+  <tr>
+   <th colspan=2>RGB32 / YUY2 / YV12</th>
+   <td>R,G,B</td><td>R,G,B,A</td><td>Y,U,V</td>
+  </tr>
+  <tr>
+   <th colspan=2>none</th>
+   <td></td><td>R,G,B</td><td></td>
+  </tr>
+ </tbody>
+</table>
+   
+    </p>
+    <p>
+
+YUV color spaces (YUY2, YV12) are usually better considering
+speed and quality (the latter because RGB colors easily
+become distorted when different channels are treated
+differently). Yet, color spaces with subsampled chroma
+channels (which applies to both, YUY2 and YV12) may expose
+difficulties when the inpainting mask does not respect the
+subsampling: If some of the chroma pixels are partly masked
+(i.e. some of the corresponding luma pixels are masked for
+inpainting, some are not), the respective chroma pixel
+will be masked for inpainting, although it might be possible
+there are not enough non-masked or yet inpainted chroma pixels
+around when it's its turn to be inpainted.
+In such chase, the chroma pixel will simply left untouched
+which will generate a reasonable result in most cases.
+However, to avoid such problems make sure each partly masked
+chroma pixel has a neighboring non-masked chroma pixel
+(e.g. by forcing your mask on the chroma grid, or by
+inflating and then deflating your mask by at least
+three pixels).
+
+    </p>
+    <p>
+
+There is no explicit mechanism that deals with parts of the
+picture which are destroied but which should not or cannot be
+recovered (like black bars on the top and the bottom of the
+movie). If you cannot <code>Crop</code> away these parts,
+mask them for inpaint. Otherwise the function would
+consider them as valid data and use them for inpainting
+(black bars usually create a big spurious edge!).
+
+    </p>
+    <p>
+
+It is in general a hard (or even impossible) task to find
+parameters for good inpainting a fixed mask for a
+long movie. The best choice of parameters depends on several
+factors, like
+<ul>
+<li>the shape of the mask</li>
+<li>the amount of &ldquo;good&rdquo; pixels available near the mask border</li>
+<li>the complexity of the underlying pictures</li>
+<li>...</li>
+<li>your personal flavor</li>
+</ul>
+In most cases it is a good idea to pick some frames of the movie,
+stack them together with <code>Stack*al</code> and watch
+the changes with <code>ScriptClip</code>
+as you change the parameters.
+
+    </p>
+    <p>
+
+<b>Beware</b>: This algorithm has originally been
+developed for inpainting <i>pictures</i>, not movies.
+No temporal information is used for inpainting.
+You might observe strong discontinuities in time
+(jumping of shapes created by the algorithm).
+See <a href="#MathInpaint">below</a> for some details
+on how the algorithm works.
+
+
+    </p>
+   <h3>Deblend Function</h3>
+    <p>
+     <code>DeblendLogo</code>(<var>clip Clip,
+                                   clip Logo,
+                                   clip &quot;Alpha&quot;</var>)
+    </p>
+    <p>
+
+<code>DeblendLogo</code> is roughly the inverse function
+of <code>Layer</code>: If a clip (the <i>logo</i>) is blended
+onto another clip (by using a given alpha mask),
+<code>DeblendLogo</code> tries to undo this and to
+restore the original clip.
+
+    </p>
+    <p>
+     <ul>
+      <li>
+      
+<var>Clip</var> is the source clip with the logo which you
+want to deblend.
+It can have any color space. The resulting clip will have the
+same properties.
+
+      </li>
+      <li>
+
+<var>Logo</var> contains the logo you want to remove from
+the source clip.
+The logo may be moving, but a static logo (<var>Logo</var>
+<i>and</i> <var>Mask</var> having only one frame)
+results in faster processing since
+some values can be pre-computed.
+If <var>Mask</var> is not provided, <var>Logo</var> must
+be RGB32, <var>Clip</var> RGB24, and the alpha channel is
+used as mask. Otherwise, <var>Logo</var> must have the same
+color space as <var>Clip</var>.
+
+      </li>
+      <li>
+
+<var>Mask</var> contains the transparency mask of the logo you
+want to remove.
+This clip may either have a YUV colorspace (the Y channel is
+used) or RGB32 (the alpha channel is used).
+Pixel values of 0 mean <i>full transparency</i> (the source
+clip is returned unchanged here), values of 255 means
+<i>full opacity</i> (the logo cannot be deblended in these
+regions, the resulting pixels will have undefined values).
+<i>The interval [0,255] also applies to YUV masks</i>, so 
+do not forget to add
+<code>Matrix="PC.601"</code>
+to the converting function when converting RGB masks to YUV.
+
+      </li>
+     </ul>
+    </p>
+    <p>
+
+The following table shows which combinations of color spaces
+are allowed and which color channels will be deblended and
+returned.
+    </p>
+    <p align=center>
+
+<table>
+ <thead>
+  <tr>
+   <th colspan=2 align=right><var>Mask</var>:</th>
+   <th colspan=3>YUY2 / YV12 / RGB32</th>
+   <th colspan=3>none</th>
+  </tr>
+  <tr>
+   <th align=left><var>Clip</var></th><th align=right width=1><var>Logo</var>:</th>
+   <th>RGB24</th><th>RGB32</th><th>YUY2 / YV12</th>
+   <th>RGB24</th><th>RGB32</th><th>YUY2 / YV12</th>
+  </tr>
+ </thead>
+ <tbody align=center>
+  <tr>
+   <th colspan=2>RGB24</th>
+   <td>R,G,B</td><td></td><td></td><td></td><td>R,G,B</td><td></td>
+  </tr>
+  <tr>
+   <th colspan=2>RGB32</th>
+   <td></td><td>R,G,B,A</td><td></td><td colspan=3></td>
+  </tr>
+  <tr>
+   <th colspan=2>YUY2 / YV12</th>
+   <td></td><td></td><td>Y,U,V</td><td colspan=3></td>
+  </tr>
+ </tbody>
+</table>
+
+    </p>
+   <h3>Analyze Function</h3>
+    <p>
+     <code>AnalyzeLogo</code>(<var>clip Clip,
+                                   clip &quot;Mask&quot;,
+                                   bool &quot;ComputeAlpha&quot;,
+                                   float &quot;DeviationWeight&quot;,
+                                   float &quot;SubsamplingWeight&quot;</var>)
+    </p>
+    <p>
+
+<code>AnalyzeLogo</code> tries to determine the color image and
+the alpha mask of a static logo which is part of a given
+source clip. The result of this function can be used to remove
+transparent parts of the logo with <code>DeblendLogo</code>
+and opaque parts with <code>InpaintLogo</code>.
+
+    </p>
+    <p>
+     <ul>
+      <li>
+
+<var>Clip</var> is the source clip containing the logo to be
+analyzed. This clip may have any color space.
+If <var>Mask</var> is not provided, <var>Clip</var> must
+be RGB32 and the alpha channel is
+used as mask.
+In general the resulting clip will have the same properties
+of the source clip except being twice as high: The upper part
+contains the color image of the logo, the lower part the
+alpha mask. If no separate mask is provided (the mask being
+the alpha channel of the source clip), the resulting clip
+will also be a RGB32 clip with the same hight and the
+logo alpha mask being placed in the alpha channel.
+
+      </li>
+      <li>
+
+<var>Mask</var> defines the parts of the video where the logo
+is suspected to be. This clip may either have a
+YUV colorspace (the Y channel of the first frame is used)
+or RGB32 (the alpha channel of the first frame is used).
+All pixels of the source clip where this mask has values
+greater than 127 will be treated as
+&ldquo;possibly damaged by the logo&rdquo;,
+all other pixels are used
+as reference (they are <i>not</i> ignored).
+If <var>ComputeAlpha</var> is set to <code>false</code>,
+<var>Mask</var> is expected to contain the alpha mask of the
+logo
+(obeying the same conventions as described above for
+<code>DeblendLogo</code>),
+and the function will only determine the color part.
+
+      </li>
+      <li>
+
+When <var>ComputeAlpha</var> is set to <code>true</code>,
+the analyzer tries to determine both the alpha mask and the
+color part of the logo, based on where the <var>Mask</var>
+clip has values greater than 127.
+If it is set to <code>false</code>, <var>Mask</var> must
+already contain the alpha mask of the logo, and only the
+color part is computed. In both cases, the mask will be
+returned.
+(default: <code>true</code>)
+
+      </li>
+      <li>
+
+<var>DeviationWeight</var> and <var>SubsamplingWeight</var>
+define the way the alpha mask of the logo is estimated.
+Since video clips contain multiple color channels, the alpha
+mask is first computed for each channel separately,
+the final mask then is a weighted mean of those.
+The weights are a product of the alpha values (each alpha
+value is weighted with itself) and of the degree of
+subsampling (0.5 for YUY2, 0.25 for YV12) of each channel.
+These arguments define the exponents of those factors &mdash;
+0.0 means the weight is not used at all.
+A negative value for one of these arguments will show a
+copyright message (along with an error message).
+(default: 0.5 for both)
+
+      </li>
+     </ul>
+    </p>
+    <p>
+
+If the mask is provided as separate clip (<var>Mask</var>
+argument), <i>all</i> color channels available in the
+source clip will be analyzed, <i>including</i> the alpha
+channel of an RGB32 clip. In most cases this is
+not desired since it needs additional CPU time, and information
+from the alpha channel is also used for estimating the
+overall alpha values.
+To avoid this, use
+<code>ConvertToRGB24</code> first when working with RGB32
+clips.
+
+    </p>
+    <p>
+
+The following table shows which combinations of color spaces
+are allowed and which color spaces will be analyzed. Note that
+the clip returned will be twice as high as the source clip if
+a <var>Mask</var> is provided.
+
+    </p>
+    <p align=center>
+<table>
+ <thead>
+  <tr>
+   <th align=left><var>Mask</var></th>
+   <th align=right width=1><var>Clip</var>:</th>
+   <th>RGB24</th>
+   <th>RGB32</th>
+   <th>YUY2 / YV12</th>
+  </tr>
+ </thead>
+ <tbody align=center>
+  <tr>
+   <th colspan=2>RGB32 / YUY2 / YV12</th>
+   <td>R,G,B</td><td>R,G,B,A</td><td>Y,U,V</td>
+  </tr>
+  <tr>
+   <th colspan=2>none</th>
+   <td></td><td>R,G,B</td><td></td>
+  </tr>
+ </tbody>
+</table>
+
+    </p>
+    <p>
+
+As with <code>InpaintLogo</code>, there is a problem with
+subsampled chroma channels. The alpha mask values of two (luma)
+pixels with highly different alpha values which share a common
+chroma pixel cannot be reliably estimated from thier chroma
+channel values. This effect usually produces some dirt in the
+estimated alpha mask and subsequently in the color mask.
+Such effects, when observed, can be avoided (besides by
+converting to RGB24) by increasing the
+<var>SubsamplingWeight</var>.
+
+    </p>
+    <p>
+
+There is no explicit mechanism that deals with parts of the
+picture which are destroied or otherwise not part of the clip
+(like black bars on the top and the bottom of the
+movie). If you cannot <code>Crop</code> away these parts,
+mask them for analyzing. Otherwise the function would
+consider them as valid data and use them for reference when
+estimating the logo's color and alpha mask.
+   
+    </p>
+   <h3>DistanceFunction</h3>
+    <p>
+     <code>DistanceFunction</code>(<var>clip Clip,
+                                        float &quot;Scale&quot;,
+                                        float &quot;PixelAspect&quot;</var>)
+    </p>
+    <p>
+
+<code>DistanceFunction</code> computes the distance function
+around or inside a given set of pixels. E.g. it can create
+a frame, where each pixels value is the distance of the
+respective pixel
+to a given set of pixels. This is typically used to inflate or
+deflate masks, or to create masks with smooth borders out
+of binary masks.
+
+     <ul>
+      <li>
+
+<var>Clip</var> is the source clip. This clip must either be
+a YUV clip, or RGB32. For YUV clips, only the Y channel will
+be altered, for RGB32 clips the alpha channel will be changed.
+
+      </li>
+      <li>
+
+<var>Scale</var> scales the gray values around the pixel set
+under consideration.
+For positive <var>Scale</var>s the significant area for
+distance calculation are all pixels
+with values greater than 127. This area will be turned white by
+this function.
+Each pixel outside this area
+with distance <span id=math>d</span> to the area will be
+assigned the value <span id=math>255-d&times;<var>Scale</var></span>
+(or 0, if it would be negative).
+If <var>Scale</var> is negative, the color channel will be inverted
+before and after computation.
+If <var>Scale</var> is zero, the image is simply made binary
+(roughly the same as <code>Levels(127,1,128,0,255)</code>).
+(default: 1.0)
+
+      </li>
+      <li>
+
+<var>PixelAspect</var> is the ratio between
+width and height of a pixel. E.g. for 16:9 DVD movies
+with a resolution of 720x576, one would use
+<code><var>PixelAspect</var>=(16.0/9.0)*(576.0/720.0)</code>&asymp;1.422.
+The result of this function is distorted according
+to this value.
+A negative value will show a
+copyright message (along with an error message).
+(default: 1.0)
+
+      </li>
+     </ul>
+    </p>
+   <h3>Sample Script</h3>
+    <p>
+
+This script opens a video file and
+removes a small logo in the upper left edge.
+We assume the movie being a 16:9 DVD clip
+with a resoultion of 720&times;576 pixel.
+The logo is roughly a square with its
+upper left corner in (20,20) and size (10,10).
+
+    </p>
+    <p>
+
+This script opens the movie and isolates the logo including
+some surrounding area. This surrounding area is needed
+by <code>AnalyzeLogo</code> and <code>InpaintLogo</code>
+as reference data.
+Since the pixel aspect ratio is higher than 1.0, we give the
+algorithms some more pixels from below the logo.
+
+<pre>
+AVISource("Movie.avi")
+FullClip = ConvertToRGB32
+ConvertToRGB24
+Crop(0,0,50,70)</pre>
+
+    </p>
+    <p>
+
+These lines creates a mask which broadly surrounds the logo.
+For complicated logos (circles...) you would draw this by hand
+and import it with <code>ImageSource</code>.
+
+<pre>
+MyMask = ConvertToRGB32.BlankClip(Length=1)
+MyMask = MyMask.Layer(MyMask.BlankClip(Width=14,Height=14,Color=Color_White).ResetMask,x=18,y=18)
+MyMask = MyMask.Mask(MyMask)</pre>
+
+    </p>
+    <p>
+
+This script analyzes the logo and returns
+an approximation of the logo color map and its
+alpha mask.
+Since color map and alpha mask are returned stacked on
+each other, they need to be merged into one RGB32 clip.
+
+<pre>
+Logo = last.AnalyzeLogo(MyMask).Trim(0,-1).ConvertToRGB32
+Logo = Logo.Crop(0,0,0,Logo.Height/2).Mask(Logo.Crop(0,Logo.Height/2,0,0))</pre>
+
+    </p>
+    <p>
+
+These lines do the dirty work: The logo is deblended
+by using the color and alpha mask returned by
+<code>AnalyzeLogo</code>.
+Then all parts with high alpha value (bigger than 235)
+are inpainted with <code>InpaintLogo</code>.
+Finally to avoid spurious edges where we isolated
+the logo region in the beginning, we smoothly <code>Layer</code>
+our result into the original clip.
+The mask needed for this is generated with
+<code>DistanceFunction</code>.
+
+<pre>
+last.DeblendLogo(Logo.ConvertToRGB24,Logo)
+last.InpaintLogo(Logo.Mask(Logo.ShowAlpha.Levels(235,1,236,0,255)),4.0,50.0,4.0,6.0,PixelAspect=16.0*576.0/9.0/720.0)
+FullClip.Layer(last.ConvertToRGB32.Mask(MyMask.DistanceFunction(256.0/8.0)))</pre>
+
+    </p>
+  <h2>Mathematical Background</h2>
+   <p>
+
+This part tries to describe the algorithms used in this plugin
+and the mathematics that led to these algorithms.
+
+   </p>
+   <h3 id="MathInpaint">Image Inpainting</h3>
+    <p>
+
+This section coarsely summarizes the article <a href="#Ref">[BM]</a>.
+
+    </p>
+    <p>
+
+A generic approach to filling the
+&ldquo;black holes&rdquo; of a pixel
+image is filling pixels at the border
+of the inpaining domain (the area which needs to be inpainted)
+with weighted means of valid (originally or already inpainted)
+pixel values around the respective pixel.
+With the image being described by a function
+<span id=math>u</span>,
+the inpainted pixel at position <span id=math>x<sub>0</sub></span>
+would have the value (see <a href="#Ref">[BM,(2)]</a>)
+<div id=math>u(x<sub>0</sub>) = <b>( </b>&sum;<sub>y</sub> w(x<sub>0</sub>,y)u(y)<b> ) / ( </b>&sum;<sub>y</sub> w(x<sub>0</sub>,y)<b> )</b> .</div>
+Here <span id=math>y</span> runs through all pixels
+inside a ball of a user defined radius
+<span id=math>&epsilon;</span>
+around <span id=math>x<sub>0</sub></span> with valid values.
+This idea has been proposed in <a href="#Ref">[Te]</a>.
+The order of inpainting is given by the distance of the
+pixels to the domain boundary &mdash; the pixels are inpainted
+form the boundary inwards.
+Telea <a href="#Ref">[Te]</a> proposes a weight function <span id=math>w</span>
+which depends only on the shape of the inpainting domain,
+and which will not be further studied here.
+
+    </p>
+    <p>
+
+In <a href="#Ref">[BM,(11)]</a> an alternative weight function is proposed which
+depends on information extracted from valid image data:
+<div id=math>w(x,y) &cong; &mu;(x) <b>exp(</b>- &mu;(x)<sup>2</sup> |c(x)<sup>&perp;</sup>&middot;(x-y)|<sup>2</sup> <b>/</b> (2 &epsilon;<sup>2</sup>) <b>) /</b> |x-y| </div>
+Here <span id=math>c(x)</span> is a unit vector describing
+the desired inpainting direction (the direction in which
+pixel values shall be transported inside the inpainting
+domain).
+<span id=math>&mu;(x)</span> controls how reliable that
+direction is: Low values will create a lot of blur
+while for high values the weighted mean sticks to the
+direction given by <span id=math>c</span>.
+These values need to be extracted from already known pixel
+values.
+
+    </p>
+    <p>
+
+A natural idea for <span id=math>c(x)</span> are directions
+of isophotes around <span id=math>x</span>:
+<span id=math>c(x) = (&nabla;u (x))<sup>&perp;</sup></span>.
+Regrettably this approach is very sensitive to noise.
+Better results can be achiven by using
+Weickert's structure tensor <a href="#Ref">[We]</a>.
+Here, blurring by convoluting with a Gaussian
+with standard deviation <span id=math>&sigma;</span>
+is denoted by
+adding <span id=math>&sigma;</span> as an index to the
+blurred function,
+e.g. <span id=math>u<sub>&sigma;</sub></span>.
+To neutralize noise, the image is blurred first with
+<span id=math>&sigma;</span>.
+Then a tensor is set up
+out of the gradient function
+<span id=math>&nabla;u<sub>&sigma;</sub></span>:
+<div id=math>&nabla;u<sub>&sigma;</sub>(x) &otimes; &nabla;u<sub>&sigma;</sub>(x)</div>
+This (<span id=math>x</span>-dependent) tensor is then again
+blurred with standard deviation <span id=math>&rho;</span>.
+The eigenvector to the minimal eigenvalue of this
+function evaluated in <span id=math>x<sub>0</sub></span>
+(the <i>coherence direction</i>)
+is a good smoothing of the isophote direction
+<span id=math>(&nabla;u (x<sub>0</sub>))<sup>&perp;</sup></span>,
+the difference between the eigenvalues
+is a measure of reliability
+of the coherence direction.
+
+    </p>
+    <p>
+
+Unfortunately, in most cases approximately
+half of the pixels around 
+<span id=math>x<sub>0</sub></span>
+are unknown and these blurrs cannot be computed.
+To avoid this problem, both blurring steps
+are modified according to <a href="#Ref">[BM,(21)]</a>.
+Let <span id=math>&chi;</span> be the function
+which is <span id=math>1</span> on valid pixels
+and <span id=math>0</span> on pixels still to be
+inpainted.
+The new final (blurred) structure tensor reads:
+<div id=math>J<sub>&sigma;,&rho;</sub>(x) = <b>(</b> &chi; &nabla;v<sub>&sigma;</sub> &otimes; &nabla;v<sub>&sigma;</sub> <b>)</b><sub>&rho;</sub>(x) <b>/</b> &chi;<sub>&rho;</sub>(x)</div>
+with <span id=math>v<sub>&sigma;</sub>(x) = <b>(</b>&chi;u<b>)</b><sub>&sigma;</sub>(x) / &chi;<sub>&sigma;</sub>(x)</span>.
+With this tensor the inpainting direction
+<span id=math>c(x)</span> is the (normed)
+eigenvector to the minimal eigenvalue of
+<span id=math>J<sub>&sigma;,&rho;</sub></span>
+(see <a href="#Ref">[BM,(22)]</a>).
+The reliability value <span id=math>&mu;(x)</span>
+is defined by the difference of the eigenvalues
+<span id=math>&lambda;<sub>1</sub></span> and
+<span id=math>&lambda;<sub>2</sub></span>
+through (see <a href="#Ref">[BM,(20)]</a>)
+<div id=math>&mu; = 1+&kappa;<b>exp(</b>-(&lambda;<sub>2</sub>-&lambda;<sub>1</sub>)<sup>-2</sup><b>)</b> .</div>
+<span id=math>&kappa;&gt;0</span> is a user-defined
+sharpness parameter.
+
+    </p>
+    <p>
+
+The gradients <span id=math>&nabla;v<sub>&sigma;</sub></span>
+are computed with forward differences (high oscillacions are
+not visible for symmetric differences), the unavoidable
+0.5 pixel shift of the image is compensated by shifted
+blurring kernels when post blurring (with standard
+deviation <span id=math>&rho;</span>) is applied.
+
+For color images (images with multiple color channels),
+following the ideas of <a href="#Ref">[BM,&sect;6]</a>,
+a common structure tensor is used, which is a
+weighted mean of the tensors of each channel.
+
+To speed up computation, the (blurred) nominator and
+the denominator
+of <span id=math>v<sub>&sigma;</sub></span> are precomputed
+and updated in each iteration step (see <a href="#Ref">[BM,&sect;6]</a>).
+A further speed increase is achieved by using the
+Fast Marching Method for calculating the inpainting order
+(see <a href="#MathFastMarching">below</a>).
+For fixed inpainting domains, this can be done in advance
+and can be reused on each frame.
+
+    </p>
+   <h3>Deblending</h3>
+    <p>
+
+Deblending is a local process
+(pixels do not affect their neighbors):
+It simply inverts the process of blending two images.
+
+Let <span id=math>x</span> be a unblended pixel value,
+<span id=math>c</span> the color value of the corresponding
+logo pixel and <span id=math>&alpha;</span> the corresponding
+alpha mask value, all in the interval [0,255].
+Then the blended pixel value <span id=math>y</span> is:
+<div id=math>y = <b>(</b> &alpha;c+(255-&alpha;)x <b>) / </b>255</div>
+(Please note that this is <i>not</i> the formula used by
+<code>Layer</code>. Layer uses
+<span id=math>x+(c-x)&times;(256&alpha;)/256/256</span>
+in AviSynth 2.56 and
+<span id=math>x+(c-x)&times;(257&alpha;+1)/256/256</span>
+in AviSynth 2.57 (see the Layer help page and
+<a href="http://sourceforge.net/tracker/index.php?func=detail&aid=1637764&group_id=57023&atid=482673">Bug 1637764</a>
+for details).)
+
+    </p>
+    <p>
+    
+This process can easily be undone:
+<div id=math>x = <b>(</b> 255y-&alpha;c <b>) / (</b> 255-&alpha; <b>)</b></div>
+This obviously fails for <span id=math>&alpha;=255</span>
+since opaque areas of the logo cannot be deblended.
+Also bad results can be expected for
+<span id=math>&alpha;&asymp;255</span>.
+For fixed logos, the expressions
+<span id=math>&alpha;c</span> and
+<span id=math>255-&alpha;</span>
+can be computed in advance to save some CPU time.
+
+    </p>
+   <h3>Analyzing</h3>
+    <p>
+
+The ideas presented in this section are mostly inspired
+by Karel Suhajda's DeLogo plugin <a href="#Ref">[Ka]</a>
+where a similar method is implemented.
+
+    </p>
+    <p>
+
+The user provides a movie clip with a fixed alpha-bleded
+logo which the <code>Analyze</code> algorithm tries to find.
+To this end, it assumes all pixel (of the unblended clip) have
+equal value disribution with some average value and some
+standard deviation.
+This assumption is obviously pretty bad for
+clips with multiple color spaces, since e.g.
+a grayscale movie will have
+a high standard deviation in the Y channel, but
+none in both chroma channels. Hence the following
+ideas refer to only one channel at a time.
+The results for each channel will be merged later,
+when necessary.
+
+    </p>
+    <p>
+
+Since the user provides the function with a mask decomposing
+the image domain into an area where the logo might be
+(the <i>logo domain</i>)
+and an area where the logo is definitely not, the latter
+area is a good data pool to compute
+the average pixel value
+<span id=math>x<sub>0</sub></span>
+and the standard deviation
+<span id=math>&sigma;<sub>0</sub></span>
+of those values.
+
+Inside the logo domain, the average value
+<span id=math>x</span>
+and standard deviation
+<span id=math>&sigma;</span>
+<i>of each pixel</i> can also be computed.
+Under the assumption that all pixels inside the logo domain
+also have been
+<span id=math>(x<sub>0</sub>,&sigma;<sub>0</sub>)</span>-distributed
+before the logo was added, the alpha mask value
+<span id=math>&alpha;</span> of a logo pixel can
+be estimated by
+<div id=math>&alpha; = 255&sigma;/&sigma;<sub>0</sub> .</div>
+With the average pixel values, the color value
+<span id=math>c</span>
+of the logo can be estimated in a similar way:
+<div id=math>c = <b>(</b> 255x-(255-&alpha;)x<sub>0</sub> <b>) / </b>&alpha;</div>
+Again, this failes for <span id=math>&alpha;&asymp;0</span>,
+which is not a problem since in this case there is nothing
+to deblend.
+
+    </p>
+    <p>
+
+This method generates an alpha mask for each channel.
+To receive one alpha mask, these channel masks need to be
+merged in some clever way.
+As described above, not every channel can be used to generate
+&ldquo;good&rdquo; alpha estimates: Some channels are
+simply not used (grayscale movies), other channels are
+artificially blurred (subsampled color channels).
+To circumvent problems coming from these effects,
+the final alpha estimate is a weighted mean of
+the alpha proposals from each channel, where the
+weight is a power of the alpha estimate itself
+multiplied with a power of the subsampling factor
+(e.g. 0.25 for YV12). The exponents are exposed to the user.
+
+    </p>
+    <p>
+
+The average values are simply computed by summing up all
+pixel values
+<span id=math>(x<sub>k</sub>)<sub>1&le;k&le;n</sub></span>
+and dividing by the number
+<span id=math>n</span> of pixels.
+The standard deviation is the square root of the variance
+which is computed with the notorious formula
+<div id=math>  <b>(</b> &sum;x<sub>k</sub><sup>2</sup> - (&sum;x<sub>k</sub>)<sup>2</sup>/n <b>) / (</b>n-1<b>)</b> .</div>
+The summation over all video frames is the most time consuming
+part. The sums are taken for each pixel separately and
+stored in 32-bit variables. To prevent overflow of the
+sum of squares, <i>all</i> pixel values are reduced by 128
+prior to computation. If the limit of the summation variables
+is reached, the summation stops
+and the number of frames processed is reported to the user.
+All subsequent summations are performed in single precision
+arithmetics. The summation over all non-masked pixels is
+carried out with Kahan's summation formula.
+
+    </p>
+   <h3 id="MathFastMarching">Fast Marching</h3>
+    <p>
+
+The Fast Marching Method is an algorithm used to compute the
+signed distance function of a set, as it is done by
+<code>DistanceFunction</code>. Since this method traverses all
+pixels in the order of their distance to the given set
+(beginning at the boundary), this method is also helpful for
+determining the pixel order in <code>InpaintLogo</code>.
+
+The basic idea is to create a narrow band around the set
+boundary
+and moving this zone away from the initial set. Pixels are
+computed inside this zone and frozen when left behine the zone.
+
+    </p>
+    <p>
+
+All pixels will have one of three states, which are called,
+in accordance to <a ref="#Ref">[Se,&sect;3.1]</a>:
+<ul>
+<li><b>A</b>live: All pixels with fixed value</li>
+<li><b>C</b>lose: The pixels in the narrow band</li>
+<li><b>F</b>ar: All pixels outside the band with still undetermined value</li>
+</ul>
+As initialization, all points with fixed values
+(the set of pixels on which the distance map is based upon)
+are flagged <b>A</b>.
+All non-<b>A</b> pixels touching (in the 5-pixel-sense)
+<b>A</b>-points are marked as <b>C</b>. All other pixels are
+marked as <b>F</b>.
+
+    </p>
+    <p>
+
+Each <b>C</b>-pixel <span id=math>x</span>
+is assigned a value based on
+<a href="#Ref">[Se,(14)]</a>:
+<div id=math>  <b>max{</b> &part;<sub>1</sub><sup>-</sup><i>u</i> , -&part;<sub>1</sub><sup>+</sup><i>u</i> , 0<b>}</b><sup>2</sup> + <b>max{</b> &part;<sub>2</sub><sup>-</sup><i>u</i> , -&part;<sub>2</sub><sup>+</sup><i>u</i> , 0<b>}</b><sup>2</sup> = 1  </div>
+Here
+<span id=math>&part;<sub>1</sub><sup>&plusmn;</sup> = &plusmn;<b>(</b>u(x&plusmn;1<sub>1</sub>)-u(x)<b>)/</b>h<sub>1</sub></span>
+and
+<span id=math>&part;<sub>2</sub><sup>&plusmn;</sup> = &plusmn;<b>(</b>u(x&plusmn;1<sub>2</sub>)-u(x)<b>)/</b>h<sub>2</sub></span>
+denote foreward (+) and backward (-) difference quotions in
+<span id=math>x<sub>1</sub></span>- and
+<span id=math>x<sub>2</sub></span>-directions,
+<span id=math>x&plusmn;1<sub>1</sub></span>
+are the pixels east (+) and west (-) of <span id=math>x</span>,
+<span id=math>x&plusmn;1<sub>2</sub></span>
+are those south (+) and north (-) of <span id=math>x</span>,
+and <span id=math>h<sub>1</sub></span>
+and <span id=math>h<sub>2</sub></span>
+are the width and height of a pixel, respectively.
+When evaluating this formula for a <b>C</b>-pixel
+<span id=math>x</span>, all non-<b>A</b>-pixels around
+<span id=math>x</span> are replace by
+<span id=math>&infin;</span>, hence they are not considered
+inside the maxima. The result still is well-defined as each
+<b>C</b>-pixel has at least one <b>A</b>-neighbor.
+
+
+    </p>
+    <p>
+
+In each iteration step, the <b>C</b>-pixel with the smallest
+value is marked as <b>A</b>live (which means it is fixed).
+All values around this pixel are marked as <b>C</b>lose
+(if not done earlier) and their values are updated as
+described above.
+By following this procedure, the pixels around the initial
+set are marked as <b>A</b>live in the order of their distance
+to the set, which provides the order needed for the inpainting
+algorithm.
+To increase computational speed, all <b>C</b>-pixels
+are stored in a heap which makes sorting their values and
+finding the smallest element easy
+(see <a href="#Ref">[Se,&sect;3.2]</a> for details).
+
+    </p>
+   <h3 id="Ref">References</h3>
+    <table>
+     <tr>
+      <td>[BM]</td>
+      <td>
+       <span style="font-variant:small-caps">Folkmar Bornemann, Tom M&auml;rz</span>:
+       <i>Fast Image Inpainting Based on Coherence Transport</i>,
+       Journal of Mathematical Imaging and Vision <b>28</b>(3), pp. 259-278, 2007.
+      </td>
+     </tr>
+     <tr>
+      <td>[Ka]</td>
+      <td>
+       <span style="font-variant:small-caps">Karel Suhajda</span>:
+       <i>DeLogo</i> Filter for VirtualDub,
+       <a href="http://neuron2.net/delogo132/delogo.html">available online (2007-10-28)</a>.
+      </td>
+     </tr>
+     <tr>
+      <td>[Se]</td>
+      <td>
+       <span style="font-variant:small-caps">James Sethian</span>:
+       <i>Fast Marching Methods</i>,
+       SIAM Review <b>41</b>(2), pp. 199-253, 1999.
+      </td>
+     </tr>
+     <tr>
+      <td>[Te]</td>
+      <td>
+       <span style="font-variant:small-caps">Alexandru Telea</span>:
+       <i>An Image Inpainting Technique Based on the Fast Marching Method</i>,
+       Journal of Graphics Tools <b>9</b>(1), pp. 23-34, 2004.
+      </td>
+     </tr>
+     <tr>
+      <td>[We]</td>
+      <td>
+       <span style="font-variant:small-caps">Joachim Weickert</span>:
+       <i>Coherence-Enhancing Shock Filters</i>, in
+       <span style="font-variant:small-caps">Bernd Michaelis, Gerald Krell</span> (editors):
+       <i>Pattern Recognition</i>,
+       Lecture Notes in Computer Science 2781, pp. 1-8, 2003.
+      </td>
+     </tr>
+    </table>
+  <h2>Version History</h2>
+   <table>
+    <tr valign="top">
+     <td>2008.01.06</td>
+     <td>
+      Initial Version
+     </td>
+    </tr>
+    <tr valign="top">
+     <td>2008.02.23</td>
+     <td>
+      <ul>
+       <li><b><i>AviSynth_C.dll</i> is not needed anymore (I updated MinGW (see the makefile) &mdash; thanks to Fizick).</b></li>
+       <li>Slight change in help file.</li>
+       <li>Added copyright notice to clip returned by <i>Demo.avs</i>.</li>
+       <li>Minor change to <i>CreateGaussKernel</i> function.</li>
+      </ul>
+     </td>
+    </tr>
+   </table>
+  <div align=right><i><font size=-2>Wolfgang Boiger</font></i></div>
+ </body>
+</html>

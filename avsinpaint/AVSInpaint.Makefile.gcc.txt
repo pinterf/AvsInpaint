@@ -1,0 +1,59 @@
+# This file is part of
+#        Logo Inpainting for AviSynth by Wolfgang Boiger
+# Copyright (C)  2007, 2008  Wolfgang Boiger, Berlin
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# version 2, as published by the Free Software Foundation in
+# June 1991 (see 'GNUGPLv2.txt').
+# 
+# There is no guaranty that the rights of third parties
+# (including software patents) are not infringed upon by the
+# execution or distribution of this program.
+# Referring to section 8 of the General Public License, any use
+# of this program (including all activities mentioned in
+# section 0 and including execution) is restricted to countries
+# where any of these activities do not infringe upon any such
+# rights of third parties. It lies with the user to verify the
+# compliance of his or her use (especially concerning but not
+# limited to distribution) of this program with the rights of
+# any third parties in the respective countries or regions.
+# 
+# This program is distributed in the hope that it will be
+# useful, but WITHOUT ANY WARRANTY; without even the implied
+# warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+# PURPOSE.  See the GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public
+# License 2 along with this program; if not, write to the
+#   Free Software Foundation, Inc.,
+#   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+
+# The following utilities were used to create the executable:
+#  gcc (GCC) 4.2.3
+#  GNU assembler 2.17.50 20060824
+#  GNU ld version 2.17.50 20060824
+
+CCOptInfo = -fdiagnostics-show-location=once
+CCOptGen = -funsigned-char -mthreads
+CCOptWarn = -Wextra -pedantic -Wall -Wdeclaration-after-statement -Wundef -Wpointer-arith -Wstrict-prototypes -Wredundant-decls
+CCOptOpt = -O2 -fomit-frame-pointer -malign-double -s -march=i386
+CCOpt = $(CCOptInfo)  $(CCOptGen)  $(CCOptWarn)  $(CCOptOpt)
+
+
+
+.PHONY : all AVSInpaint.dll AVSInpaint.obj
+
+
+
+all : AVSInpaint.dll
+
+
+AVSInpaint.dll : AVSInpaint.obj AviSynth.lib
+	gcc  $(CCOpt)  -shared  -o $@  AVSInpaint.obj AviSynth.lib
+
+
+AVSInpaint.obj : AVSInpaint.c AviSynth_C.h
+	gcc  $(CCOpt)  -c  -o $@  AVSInpaint.c
