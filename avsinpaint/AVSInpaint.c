@@ -2416,6 +2416,7 @@ double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  d
   }
   else
   {
+    // FIXME: check if integer abs is appropriate here, probably yes
     for (k=-Size ; k<=Size ; k++)  Kernel[k] = (abs(Center-k)<1.0)?(1.0-abs(Center-k)):0.0;
   }
   if (!Size)  Kernel[0] = 1.0;
