@@ -1,0 +1,62 @@
+// Microsoft Visual C++ generated resource script.
+//
+#include <windows.h>
+
+/////////////////////////////////////////////////////////////////////////////
+// English resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+LANGUAGE LANG_ENGLISH, SUBLANG_NEUTRAL
+#pragma code_page(1252)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Version
+//
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,1,0
+ PRODUCTVERSION 1,1,0
+ FILEFLAGSMASK 0x0L
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x2L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040004b0"
+        BEGIN
+            VALUE "Comments", "Motion estimation and compensation"
+            VALUE "CompanyName", "Wolfgang Boiger"
+            VALUE "FileDescription", "AvsInPaint for Avisynth C 2.5 interface"
+            VALUE "FileVersion", "1.1"
+            VALUE "InternalName", "AvsInPaint"
+            VALUE "LegalCopyright", "Copyright (C)  2007, 2008  Wolfgang Boiger, 2019 pinterf"
+            VALUE "OriginalFilename", "AvsInPaint.dll"
+            VALUE "ProductName", "AvsInPaint"
+            VALUE "ProductVersion", "1.1"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x400, 1200
+    END
+END
+
+#endif    // English resources
+/////////////////////////////////////////////////////////////////////////////
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+
