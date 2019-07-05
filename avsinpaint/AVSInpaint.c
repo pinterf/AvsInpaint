@@ -32,13 +32,14 @@
  **************************************************************/
 
 // 2008.02.23 - Original version
-// 20190624 
-// change to C 2.5 Plugins interface, AVS+ headers
+// 20190624
+// change to AVS+ headers
 // change avs_is_yuy to avs_is_yuv (Function name changed, it is not the same as avs_is_yuy2!)
 // Add resource file for DLL versioning, version 1.1
+// For newer changes: see readme
 
 //#define  VersionString  "2008.02.23"
-#define  VersionString  "2019.06.24 1.1"
+#define  VersionString  "2019.06.27 1.2"
 #define  LegalInfoString  "* Logo Inpainting for AviSynth by Wolfgang Boiger *\nVersion " VersionString " ;  built  " __DATE__ "  " __TIME__ " .\nCopyright (C)  2007, 2008  Wolfgang Boiger, Berlin.\nLicensed under GNU GPL version 2 with possible geographic restrictions.\nThis software comes without any warranty, even without warranty\nof merchantability or fitness for a particular purpose.\nSee files 'AVSInpaint.htm' and 'GNUGPLv2.txt' for details."
 
 
