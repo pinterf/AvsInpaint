@@ -39,7 +39,8 @@
 // For newer changes: see readme
 
 //#define  VersionString  "2008.02.23"
-#define  VersionString  "2019.06.27 1.2"
+//#define  VersionString  "2019.06.27 1.2"
+#define  VersionString  "2021.10.25 1.3"
 #define  LegalInfoString  "* Logo Inpainting for AviSynth by Wolfgang Boiger *\nVersion " VersionString " ;  built  " __DATE__ "  " __TIME__ " .\nCopyright (C)  2007, 2008  Wolfgang Boiger, Berlin.\nLicensed under GNU GPL version 2 with possible geographic restrictions.\nThis software comes without any warranty, even without warranty\nof merchantability or fitness for a particular purpose.\nSee files 'AVSInpaint.htm' and 'GNUGPLv2.txt' for details."
 
 
@@ -284,9 +285,9 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   MaskVideoInfo = MaskClip?avs_get_video_info(MaskClip):0;
   if (MaskClip && !MaskVideoInfo)  ErrorText = "InpaintLogo: Could not load mask clip";
   /* Check all video properties */
-  if (!(ErrorText || avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_rgb32(VideoInfo) || avs_is_rgb24(VideoInfo)))  ErrorText = "InpaintLogo: Color space unknown (RGB24, RGB32, YUY2, YV12 allowed only)";
+  if (!(ErrorText || avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_yv16(VideoInfo) || avs_is_yv24(VideoInfo) || avs_is_y8(VideoInfo) || avs_is_rgb32(VideoInfo) || avs_is_rgb24(VideoInfo)))  ErrorText = "InpaintLogo: Color space unknown (RGB24, RGB32, YUY2, YV12/16/24/8 allowed only)";
   if (!(ErrorText || (avs_has_video(VideoInfo) && VideoInfo->num_frames && VideoInfo->width && VideoInfo->height)))  ErrorText = "InpaintLogo: Source clip has no video";
-  if (!ErrorText && MaskClip && !(avs_is_yuy2(MaskVideoInfo) || avs_is_yv12(MaskVideoInfo) || avs_is_rgb32(MaskVideoInfo)))  ErrorText = "InpaintLogo: Mask color space must have luma channel (YUY2 or YV12) or alpha channel (RGB32)";
+  if (!ErrorText && MaskClip && !(avs_is_yuy2(MaskVideoInfo) || avs_is_yv12(MaskVideoInfo) || avs_is_yv16(MaskVideoInfo) || avs_is_yv24(MaskVideoInfo) || avs_is_y8(MaskVideoInfo) || avs_is_rgb32(MaskVideoInfo)))  ErrorText = "InpaintLogo: Mask color space must have luma channel (YUY2, YV12/16/24, Y8) or alpha channel (RGB32)";
   if (!ErrorText && MaskClip && !(avs_has_video(MaskVideoInfo) && MaskVideoInfo->num_frames && MaskVideoInfo->width && MaskVideoInfo->height))  ErrorText = "InpaintLogo: Mask clip has no video";
   if (!ErrorText && MaskClip && !((VideoInfo->width==MaskVideoInfo->width) && (VideoInfo->height==MaskVideoInfo->height)))  ErrorText = "InpaintLogo: Source and mask clip have different dimensions";
   if (!(ErrorText || MaskClip || avs_is_rgb32(VideoInfo)))  ErrorText = "InpaintLogo: Mask is missing (needed if source clip is not RGB32)";
@@ -340,7 +341,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     InpaintData->Width = VideoInfo->width;
     InpaintData->Height = VideoInfo->height;
     InpaintData->LumaStride = Stride[0];
-    /* If there is no chroma channel (Y8?) all chroma values are set to zero */
+    /* If there is no chroma channel (Y8) all chroma values are set to zero */
     if (InpaintData->ChromaChannelCount)
     {
       InpaintData->ChromaPixelWidth = ChromaPixelWidth[1];
@@ -365,7 +366,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       InpaintData->MaskFrameCount = 0;
     }
     GetFramePointers(0,0,0,0,Stride,0,0,MaskVideoInfo->pixel_type);
-    InpaintData->MaskChannelNo = avs_is_yuv(MaskVideoInfo)?0:3;
+    InpaintData->MaskChannelNo = avs_is_yuv(MaskVideoInfo)?0:3; // y8 is yuv as well here
     InpaintData->FlipMask = (avs_is_rgb(VideoInfo)!=avs_is_rgb(MaskVideoInfo));
     InpaintData->MaskStride = Stride[InpaintData->MaskChannelNo];
     InpaintData->MaskPixelType = MaskVideoInfo->pixel_type;
@@ -755,7 +756,8 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   if (InpaintData->StaticMaskData)
   {
     memcpy(chiLuma,MaskData->chiLuma,sizeof(BYTE)*Width*Height);
-    memcpy(chiChroma,MaskData->chiChroma,sizeof(BYTE)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
+    if(ChromaChannelCount)
+      memcpy(chiChroma,MaskData->chiChroma,sizeof(BYTE)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
     if (LumaWeight!=0.0)  memcpy(GchiLuma,MaskData->GchiLuma,sizeof(float)*Width*Height); 
     if (ChromaWeight!=0.0)  memcpy(GchiChroma,MaskData->GchiChroma,sizeof(float)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
   }
@@ -779,15 +781,26 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   {
     x = MaskPixelOrder[PixelNo]%Width;
     y = MaskPixelOrder[PixelNo]/Width;
-    GetStructureTensor(&TensorXX,&TensorXY,&TensorYY,
-                       GchiLuma,GchiuLuma,chiLuma,LumaWeight,
-                       GchiChroma,GchiuChromas,chiChroma,ChromaWeight,
-                       ChromaPixelWidth,ChromaPixelHeight,ChromaChannelCount,
-                       x,y,Width,Height,
-                       Luma4LumaPostBlurXKernel,Luma4LumaPostBlurXKernelSize,1,
-                       Luma4LumaPostBlurYKernel,Luma4LumaPostBlurYKernelSize,1,
-                       (ChromaWeight!=0.0)?Chroma4LumaPostBlurXKernels[x%ChromaPixelWidth]:0,Chroma4LumaPostBlurXKernelSize,2*(x%ChromaPixelWidth)+1<ChromaPixelWidth?(-1):(+1),
-                       (ChromaWeight!=0.0)?Chroma4LumaPostBlurYKernels[y%ChromaPixelHeight]:0,Chroma4LumaPostBlurYKernelSize,2*(y%ChromaPixelHeight)+1<ChromaPixelHeight?(-1):(+1));
+    if(ChromaChannelCount)
+      GetStructureTensor(&TensorXX,&TensorXY,&TensorYY,
+                         GchiLuma,GchiuLuma,chiLuma,LumaWeight,
+                         GchiChroma,GchiuChromas,chiChroma,ChromaWeight,
+                         ChromaPixelWidth,ChromaPixelHeight,ChromaChannelCount,
+                         x,y,Width,Height,
+                         Luma4LumaPostBlurXKernel,Luma4LumaPostBlurXKernelSize,1,
+                         Luma4LumaPostBlurYKernel,Luma4LumaPostBlurYKernelSize,1,
+                         (ChromaWeight!=0.0)?Chroma4LumaPostBlurXKernels[x%ChromaPixelWidth]:0,Chroma4LumaPostBlurXKernelSize,2*(x%ChromaPixelWidth)+1<ChromaPixelWidth?(-1):(+1),
+                         (ChromaWeight!=0.0)?Chroma4LumaPostBlurYKernels[y%ChromaPixelHeight]:0,Chroma4LumaPostBlurYKernelSize,2*(y%ChromaPixelHeight)+1<ChromaPixelHeight?(-1):(+1));
+    else
+      GetStructureTensor(&TensorXX, &TensorXY, &TensorYY,
+        GchiLuma, GchiuLuma, chiLuma, LumaWeight,
+        GchiChroma, GchiuChromas, chiChroma, ChromaWeight,
+        ChromaPixelWidth, ChromaPixelHeight, ChromaChannelCount,
+        x, y, Width, Height,
+        Luma4LumaPostBlurXKernel, Luma4LumaPostBlurXKernelSize, 1,
+        Luma4LumaPostBlurYKernel, Luma4LumaPostBlurYKernelSize, 1,
+        0, 0, 1 /*n/a*/,
+        0, 0, 1 /*n/a*/);
     CoherenceStrength = GetCoherenceData(&CoherenceDirectionX,&CoherenceDirectionY,TensorXX/PixelWidth2,TensorXY,TensorYY/PixelHeight2,Sharpness);
     Value = InpaintPixel(LumaRadiusX,LumaRadiusY,LumaData,chiLuma,LumaStride,LumaPitch,x,y,Width,Height,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
     /* What to do if inpainting failed ?? */
@@ -954,13 +967,13 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   /* Check if all color spaces and dimensions and so on are correct */
   ErrorText = 0;
   if (!(avs_has_video(SrcVideoInfo) && SrcVideoInfo->num_frames && SrcVideoInfo->width && SrcVideoInfo->height))  ErrorText = "Deblend: Source clip has no video";
-  if (!(ErrorText || avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo)))  ErrorText = "Deblend: Color space unknown (RGB24, RGB32, YUY2, YV12 allowed only)";
+  if (!(ErrorText || avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo)))  ErrorText = "Deblend: Color space unknown (RGB24, RGB32, YUY2, YV12/16/24/8 allowed only)";
   if (!(ErrorText || avs_is_same_colorspace(SrcVideoInfo,LogoVideoInfo) || (avs_is_rgb(SrcVideoInfo) && avs_is_rgb(LogoVideoInfo))))  ErrorText = "Deblend: Source clip and logo clip must have same color spaces (combinations of RGB / RGBA are allowed)";
   if (!(ErrorText || (avs_has_video(LogoVideoInfo) && LogoVideoInfo->num_frames && LogoVideoInfo->width && LogoVideoInfo->height)))  ErrorText = "Deblend: Logo clip has no video";
   if (!(ErrorText || ((SrcVideoInfo->width==LogoVideoInfo->width) && (SrcVideoInfo->height==LogoVideoInfo->height))))  ErrorText = "Deblend: Source clip and logo clip have different dimensions";
   if (!(ErrorText || AlphaClip || avs_is_rgb32(LogoVideoInfo)))  ErrorText = "Deblend: Alpha clip is missing (needed if logo clip is not RGB32)";
   if (!(ErrorText || !AlphaClip || (avs_has_video(AlphaVideoInfo) && AlphaVideoInfo->num_frames)))  ErrorText = "Deblend: Alpha clip has no video";
-  if (!(ErrorText || !AlphaClip || avs_is_yuy2(AlphaVideoInfo) || avs_is_yv12(AlphaVideoInfo) || avs_is_rgb32(AlphaVideoInfo)))  ErrorText = "Deblend: Alpha color space must have luma channel (YUY2 or YV12) or alpha channel (RGBA)";
+  if (!(ErrorText || !AlphaClip || avs_is_yuy2(AlphaVideoInfo) || avs_is_yv12(AlphaVideoInfo) || avs_is_yv16(AlphaVideoInfo) || avs_is_yv24(AlphaVideoInfo) || avs_is_y8(AlphaVideoInfo) || avs_is_rgb32(AlphaVideoInfo)))  ErrorText = "Deblend: Alpha color space must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGBA)";
   if (!(ErrorText || !AlphaClip || ((AlphaVideoInfo->width==SrcVideoInfo->width) && (AlphaVideoInfo->height==SrcVideoInfo->height))))  ErrorText = "Deblend: Source clip and alpha clip have different dimensions";
   /* Everything seems to be fine */
   /* Data structure is allocated */
@@ -1022,7 +1035,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       }
       DeblendData->StaticAlphaDataChannels[0] = (BYTE*)malloc(sizeof(DoubleByte)*LogoVideoInfo->width*LogoVideoInfo->height);
       if (!DeblendData->StaticAlphaDataChannels[0])  ErrorText = "Deblend: Could not allocate memory";
-      if (avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo))
+      if (avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo))
       {
         DeblendData->StaticAlphaDataChannels[1] = (BYTE*)malloc(sizeof(DoubleByte)*LogoVideoInfo->width*LogoVideoInfo->height);
         if (!DeblendData->StaticAlphaDataChannels[1])  ErrorText = "Deblend: Could not allocate memory";
@@ -1294,12 +1307,12 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   MaskVideoInfo = MaskGiven?avs_get_video_info(MaskClip):0;
   /* Check if everything is consistent. (ErrorText) indicates an error. */
   if (!(avs_has_video(SrcVideoInfo) && SrcVideoInfo->num_frames))  ErrorText = "Analyze: Source clip has no video";
-  if (!(ErrorText || avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo)))  ErrorText = "Analyze: Color space unknown (RGB24, RGB32, YUY2, YV12 allowed only)";
+  if (!(ErrorText || avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo)))  ErrorText = "Analyze: Color space unknown (RGB24, RGB32, YUY2, YV12/16/24/8 allowed only)";
   if (!ErrorText && ((SrcVideoInfo->width==0) || (SrcVideoInfo->height==0) || (SrcVideoInfo->width==1 && SrcVideoInfo->height==1)))  ErrorText = "Analyze: Source clip too small";
   if (!ErrorText && ComputeAlpha && (SrcVideoInfo->num_frames<2))  ErrorText = "Analyze: Source clip must have at least two frames for alpha computation";
   if (!(ErrorText || MaskClip || avs_is_rgb32(SrcVideoInfo)))  ErrorText = "Analyze: Mask is missing (needed if source clip is not RGB32)";
   if (!ErrorText && MaskClip && !(avs_has_video(MaskVideoInfo) && MaskVideoInfo->num_frames))  ErrorText = "Analyze: Mask clip has no video";
-  if (!ErrorText && MaskClip && !avs_is_yuy2(MaskVideoInfo) && !avs_is_yv12(MaskVideoInfo) && !avs_is_rgb32(MaskVideoInfo))  ErrorText = "Analyze: Mask color space must have luma channel (YUY2 or YV12) or alpha channel (RGB32)";
+  if (!ErrorText && MaskClip && !avs_is_yuy2(MaskVideoInfo) && !avs_is_yv12(MaskVideoInfo) && !avs_is_yv16(MaskVideoInfo) && !avs_is_yv24(MaskVideoInfo) && !avs_is_y8(MaskVideoInfo) && !avs_is_rgb32(MaskVideoInfo))  ErrorText = "Analyze: Mask color space must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGB32)";
   if (!ErrorText && MaskClip && !(MaskVideoInfo->width==SrcVideoInfo->width && MaskVideoInfo->height==SrcVideoInfo->height))  ErrorText = "Analyze: Source clip and mask clip have different dimensions";
   /* Done! All arguments seem to be correct */
   /* As this filter is already done when the script is loaded, we try to deactivate all cache systems - Is this smart ? */
@@ -1475,7 +1488,7 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
   ErrorText = 0;
   DistFcnData = 0;
   /* Check all video properties */
-  if (!(ErrorText || avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_rgb32(VideoInfo)))  ErrorText = "DistanceFunction: Source clip must have luma channel (YUY2 or YV12) or alpha channel (RGB32)";
+  if (!(ErrorText || avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_yv16(VideoInfo) || avs_is_yv24(VideoInfo) || avs_is_y8(VideoInfo) || avs_is_rgb32(VideoInfo)))  ErrorText = "DistanceFunction: Source clip must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGB32)";
   if (!(ErrorText || (avs_has_video(VideoInfo) && VideoInfo->num_frames && VideoInfo->width && VideoInfo->height)))  ErrorText = "DistanceFunction: Source clip has no video";
   if (!ErrorText)
   {
@@ -1649,11 +1662,16 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
     case AVS_CS_YUY2:
     case AVS_CS_YV12:
     case AVS_CS_I420:
+    case AVS_CS_YV16:
+    case AVS_CS_YV24:
       if (ChannelCount>3)  ChannelCount = 3;
     break;
     case AVS_CS_BGR32:
       if (ChannelCount>4)  ChannelCount = 4;
     break;
+    case AVS_CS_Y8:
+      if (ChannelCount > 1)  ChannelCount = 1;
+      break;
     default:
       return  0;
     break;
@@ -1674,6 +1692,9 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
       break;
       case AVS_CS_YV12:
       case AVS_CS_I420:
+      case AVS_CS_YV16:
+      case AVS_CS_YV24:
+      case AVS_CS_Y8:
         for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Stride[ChannelNo] = 1;
       break;
     }
@@ -1690,6 +1711,9 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
       break;
       case AVS_CS_YV12:
       case AVS_CS_I420:
+      case AVS_CS_YV16:
+      case AVS_CS_YV24:
+      case AVS_CS_Y8:
         Pitch[0] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_Y);
         if (ChannelCount>1)  Pitch[1] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_U);
         if (ChannelCount>2)  Pitch[2] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_V);
@@ -1702,11 +1726,14 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
     {
       case AVS_CS_BGR24:
       case AVS_CS_BGR32:
+      case AVS_CS_YV24:
+      case AVS_CS_Y8:
         for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelWidth[ChannelNo] = 1;
       break;
       case AVS_CS_YUY2:
       case AVS_CS_YV12:
       case AVS_CS_I420:
+      case AVS_CS_YV16:
         PixelWidth[0] = 1;
         for (ChannelNo=1 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelWidth[ChannelNo] = 2;
       break;
@@ -1719,6 +1746,9 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
       case AVS_CS_BGR24:
       case AVS_CS_BGR32:
       case AVS_CS_YUY2:
+      case AVS_CS_YV24:
+      case AVS_CS_YV16:
+      case AVS_CS_Y8:
         for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelHeight[ChannelNo] = 1;
       break;
       case AVS_CS_YV12:
@@ -1743,6 +1773,9 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
       break;
       case AVS_CS_YV12:
       case AVS_CS_I420:
+      case AVS_CS_YV24:
+      case AVS_CS_YV16:
+      case AVS_CS_Y8:
         ReadPtrs[0] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_Y);
         if (ChannelCount>1)  ReadPtrs[1] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_U);
         if (ChannelCount>2)  ReadPtrs[2] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_V);
@@ -1765,6 +1798,9 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
       break;
       case AVS_CS_YV12:
       case AVS_CS_I420:
+      case AVS_CS_YV24:
+      case AVS_CS_YV16:
+      case AVS_CS_Y8:
         WritePtrs[0] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_Y);
         if (ChannelCount>1)  WritePtrs[1] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_U);
         if (ChannelCount>2)  WritePtrs[2] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_V);
@@ -2056,16 +2092,23 @@ int  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *
   {
     /* xymin is first pixel inside the processing area
        xymax is last pixel inside the processing area */
-    xmin /= InpaintData->ChromaPixelWidth;
-    xmin *= InpaintData->ChromaPixelWidth;
-    xmax /= InpaintData->ChromaPixelWidth;
-    xmax++;
-    xmax *= InpaintData->ChromaPixelWidth;
-    ymin /= InpaintData->ChromaPixelHeight;
-    ymin *= InpaintData->ChromaPixelHeight;
-    ymax /= InpaintData->ChromaPixelHeight;
-    ymax++;
-    ymax *= InpaintData->ChromaPixelHeight;
+    if (InpaintData->ChromaChannelCount) {
+      xmin /= InpaintData->ChromaPixelWidth;
+      xmin *= InpaintData->ChromaPixelWidth;
+      xmax /= InpaintData->ChromaPixelWidth;
+      xmax++;
+      xmax *= InpaintData->ChromaPixelWidth;
+      ymin /= InpaintData->ChromaPixelHeight;
+      ymin *= InpaintData->ChromaPixelHeight;
+      ymax /= InpaintData->ChromaPixelHeight;
+      ymax++;
+      ymax *= InpaintData->ChromaPixelHeight;
+    }
+    else {
+      // Y8
+      xmax++;
+      ymax++;
+    }
     /* xymin is first pixel inside the processing area
        xymax is first pixel outside the processing area */
     MaskData->OffsetX = xmin;
