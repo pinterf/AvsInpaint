@@ -56,7 +56,7 @@ to provide smooth blending masks.
     <p>
 
 This plugin is designed to work with Avisynth+ and AviSynth 2.6.
-Supported color spaces are (generally) RGB24, RGB32, YUY2, YV12.
+Supported color spaces are (generally) RGB24, RGB32, YUY2, YV12, YV16, YV24, Y8.
 
     </p>
    <h3>Terms and Conditions for Execution, Copying, Distribution and Modification</h3>
@@ -242,7 +242,7 @@ Chroma values are always inpainted after a luma value
 has been inpainted
 in the same position.
 This can be especially usefull when chroma channels have a
-lower resultion than luma channels (e.g. YUY2, YV12), i.e.
+lower resultion than luma channels (e.g. YUY2, YV12, YV16), i.e.
 the chroma pixel is not in exactly the same position
 in which the just inpainted luma pixel is.
 This argument is ignored for RGB color spaces.
@@ -308,17 +308,18 @@ returned.
    <th align=right width=1><var>Clip</var>:</th>
    <th>RGB24</th>
    <th>RGB32</th>
-   <th>YUY2 / YV12</th>
+   <th>YUY2 / YV12 / YV16 / YV24</th>
+   <th>Y8</th>
   </tr>
  </thead>
  <tbody align=center>
   <tr>
-   <th colspan=2>RGB32 / YUY2 / YV12</th>
-   <td>R,G,B</td><td>R,G,B,A</td><td>Y,U,V</td>
+   <th colspan=2>RGB32 / YUY2 / YV12 / YV16 / YV24 / Y8</th>
+   <td>R,G,B</td><td>R,G,B,A</td><td>Y,U,V</td><td>Y</td>
   </tr>
   <tr>
    <th colspan=2>none</th>
-   <td></td><td>R,G,B</td><td></td>
+   <td></td><td>R,G,B</td><td></td><td></td>
   </tr>
  </tbody>
 </table>
@@ -326,11 +327,11 @@ returned.
     </p>
     <p>
 
-YUV color spaces (YUY2, YV12) are usually better considering
+YUV color spaces are usually better considering
 speed and quality (the latter because RGB colors easily
 become distorted when different channels are treated
 differently). Yet, color spaces with subsampled chroma
-channels (which applies to both, YUY2 and YV12) may expose
+channels (which applies to YUY2, YV12, YV16) may expose
 difficulties when the inpainting mask does not respect the
 subsampling: If some of the chroma pixels are partly masked
 (i.e. some of the corresponding luma pixels are masked for
@@ -458,13 +459,13 @@ returned.
  <thead>
   <tr>
    <th colspan=2 align=right><var>Mask</var>:</th>
-   <th colspan=3>YUY2 / YV12 / RGB32</th>
+   <th colspan=3>YUY2 / YV12 / YV16 / YV24 / Y8 / RGB32</th>
    <th colspan=3>none</th>
   </tr>
   <tr>
    <th align=left><var>Clip</var></th><th align=right width=1><var>Logo</var>:</th>
-   <th>RGB24</th><th>RGB32</th><th>YUY2 / YV12</th>
-   <th>RGB24</th><th>RGB32</th><th>YUY2 / YV12</th>
+   <th>RGB24</th><th>RGB32</th><th>YUY2 / YV12 / YV16 / YV24 / Y8</th>
+   <th>RGB24</th><th>RGB32</th><th>YUY2 / YV12 / YV16 / YV24 / Y8</th>
   </tr>
  </thead>
  <tbody align=center>
@@ -477,8 +478,12 @@ returned.
    <td></td><td>R,G,B,A</td><td></td><td colspan=3></td>
   </tr>
   <tr>
-   <th colspan=2>YUY2 / YV12</th>
+   <th colspan=2>YUY2 / YV12 / YV16 / YV24</th>
    <td></td><td></td><td>Y,U,V</td><td colspan=3></td>
+  </tr>
+  <tr>
+   <th colspan=2>Y8</th>
+   <td></td><td></td><td>Y</td><td colspan=3></td>
   </tr>
  </tbody>
 </table>
@@ -560,7 +565,7 @@ mask is first computed for each channel separately,
 the final mask then is a weighted mean of those.
 The weights are a product of the alpha values (each alpha
 value is weighted with itself) and of the degree of
-subsampling (0.5 for YUY2, 0.25 for YV12) of each channel.
+subsampling (0.5 for YUY2 and YV16, 0.25 for YV12) of each channel.
 These arguments define the exponents of those factors &mdash;
 0.0 means the weight is not used at all.
 A negative value for one of these arguments will show a
@@ -600,17 +605,18 @@ a <var>Mask</var> is provided.
    <th align=right width=1><var>Clip</var>:</th>
    <th>RGB24</th>
    <th>RGB32</th>
-   <th>YUY2 / YV12</th>
+   <th>YUY2 / YV12 / YV16 / YV24</th>
+   <th>Y8</th>
   </tr>
  </thead>
  <tbody align=center>
   <tr>
-   <th colspan=2>RGB32 / YUY2 / YV12</th>
-   <td>R,G,B</td><td>R,G,B,A</td><td>Y,U,V</td>
+   <th colspan=2>RGB32 / YUY2 / YV12 / YV16 / YV24 / Y8</th>
+   <td>R,G,B</td><td>R,G,B,A</td><td>Y,U,V</td><td>Y</td>
   </tr>
   <tr>
    <th colspan=2>none</th>
-   <td></td><td>R,G,B</td><td></td>
+   <td></td><td>R,G,B</td><td></td><td></td>
   </tr>
  </tbody>
 </table>
@@ -1191,7 +1197,7 @@ finding the smallest element easy
      </td>
     </tr>
     <tr valign="top">
-     <td>20090624 1.1 (pinterf)</td>
+     <td>20190624 1.1 (pinterf)</td>
      <td>
       <ul>
        <li>Fix crash in AVSInpaint-2008.02.23, when using mode "Deblend" or "Both"<br />(double frame release, revealed when using Avisynth+)</li>
@@ -1203,10 +1209,19 @@ finding the smallest element easy
      </td>
     </tr>
     <tr valign="top">
-     <td>20090705 1.2</td>
+     <td>20190705 1.2</td>
      <td>
       <ul>
        <li>- Fix broken compatibility with Avisynth 2.6 (remove underscore from dll export)</li>
+      </ul>
+     </td>
+    </tr>
+    <tr valign="top">
+     <td>20211025 1.3</td>
+     <td>
+      <ul>
+       <li>- fix: InpaintDelogo: stuck for large (e.g. 1920x1080) frame sizes: Fast Marching process did not converge.</li>
+       <li>- Add YV16, YV24 and Y8 color spaces</li>
       </ul>
      </td>
     </tr>
