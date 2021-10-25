@@ -1862,7 +1862,9 @@ int  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Widt
 {
   int  k, h;  /* k = Position in matrix,   h = position in heap */
   int  xm, xp, ym, yp;
-  float  p, uxm, uxp, uym, uyp, ux, uy;
+  // for large (even FullHD) frame sizes 'float' is not enough
+  // process sometimes does not converge
+  double  p, uxm, uxp, uym, uyp, ux, uy;
 
 
   k = Width*y+x;  /* Position in arrays */
