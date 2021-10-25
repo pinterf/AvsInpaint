@@ -33,12 +33,22 @@
 #ifndef AVS_CAPI_H
 #define AVS_CAPI_H
 
+#include "config.h"
+
+#ifdef AVS_POSIX
+// this is also defined in avs/posix.h
+#ifndef AVS_HAIKU
+#define __declspec(x)
+#endif
+#endif
+
 #ifdef __cplusplus
 #  define EXTERN_C extern "C"
 #else
 #  define EXTERN_C
 #endif
 
+#ifdef AVS_WINDOWS
 #ifdef BUILDING_AVSCORE
 #  if defined(GCC) && defined(X86_32)
 #    define AVSC_CC
@@ -60,6 +70,9 @@
 #    define AVSC_CC
 #  endif
 #endif
+#  else
+#    define AVSC_CC
+#endif
 
 // On 64-bit Windows, there's only one calling convention,
 // so there is no difference between MSVC and GCC. On 32-bit,
@@ -80,12 +93,26 @@
 #define AVSC_INLINE static __inline
 
 #ifdef BUILDING_AVSCORE
-#  define AVSC_EXPORT __declspec(dllexport)
+#ifdef AVS_WINDOWS
+#  ifndef AVS_STATIC_LIB
+#    define AVSC_EXPORT __declspec(dllexport)
+#  else
+#    define AVSC_EXPORT
+#  endif
 #  define AVSC_API(ret, name) EXTERN_C AVSC_EXPORT ret AVSC_CC name
 #else
+#  define AVSC_EXPORT EXTERN_C
+#  define AVSC_API(ret, name) EXTERN_C ret AVSC_CC name
+#endif
+#else
 #  define AVSC_EXPORT EXTERN_C __declspec(dllexport)
+#  ifndef AVS_STATIC_LIB
+#    define AVSC_IMPORT __declspec(dllimport)
+#  else
+#    define AVSC_IMPORT
+#  endif
 #  ifndef AVSC_NO_DECLSPEC
-#    define AVSC_API(ret, name) EXTERN_C __declspec(dllimport) ret AVSC_CC name
+#    define AVSC_API(ret, name) EXTERN_C AVSC_IMPORT ret AVSC_CC name
 #  else
 #    define AVSC_API(ret, name) typedef ret (AVSC_CC *name##_func)
 #  endif
