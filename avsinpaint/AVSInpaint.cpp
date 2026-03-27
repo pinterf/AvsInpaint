@@ -60,11 +60,6 @@ constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= real
 /* FMMHeapInitialSize is inlined at usage as: 4*(Width+Height+FMMHeapDelta) */
 
 
-typedef  int32_t   Analyze_Sum1Type;  /* Data types used for summation in Analyze function */
-typedef  uint32_t  Analyze_Sum2Type;
-#define  Analyze_Sum1Max  INT32_MAX   /* Maximal values for summation data types (summation will stop here) */
-#define  Analyze_Sum2Max  UINT32_MAX
-
 constexpr int  Analyze_Result_OK  = 0;
 constexpr int  Analyze_Result_GeneralError  = -1;
 constexpr int  Analyze_Result_SrcClipError  = -2;
@@ -107,6 +102,10 @@ constexpr int  MaxChannelCount  = 4;  /* Maximal number of color channels for al
 
 #include  "AviSynth_C.h"
 
+typedef  int32_t   Analyze_Sum1Type;  /* Data types used for summation in Analyze function */
+typedef  uint32_t  Analyze_Sum2Type;
+#define  Analyze_Sum1Max  INT32_MAX   /* Maximal values for summation data types (summation will stop here) */
+#define  Analyze_Sum2Max  UINT32_MAX
 
 
 /* Structures used for inpaint data (including pre-computed data for static logos) */
@@ -2657,7 +2656,10 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   double  ChannelNMSum1[MaxChannelCount], ChannelNMSum2[MaxChannelCount], KahanSum, KahanC, KahanY, KahanT;
   int  ChannelMaskSize;
   /* Variables for Phase 3 */
-  float * AlphaChannel, * ChannelAlpha, * ChannelAlphaVector;
+  float * AlphaChannel, * ChannelAlpha;
+  /* Downsampled alpha for subsampled chroma channels (e.g. YUY2/YV16 half-width, YV12 quarter-res).
+     Not needed for RGB or YV24 where all channels share the same resolution as the luma/alpha. */
+  std::vector<float> ChannelAlphaVector;
   double  PixelValue, AlphaSum, AlphaWeightSum, AlphaWeight[MaxChannelCount];
   BYTE * DestData[MaxChannelCount];
   BYTE * AlphaData, * DestPtr;
@@ -2989,54 +2991,58 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
     }
   }
   /** Now we compute the color channels **/
-  ChannelAlphaVector = nullptr;
   ChannelNo = 0;
   while (ChannelNo<ChannelCount)
   {
-    /* Only needed if PixelWidth[CC]*PixelHeight[CC]>1 for at least one color channel */
-    /* zero with or height means that the channel is unused */
+    /* Only needed if at least one color channel is subsampled (YUY2, YV16, YV12/I420) */
     if (PixelWidth[ChannelNo]*PixelHeight[ChannelNo]>1)
     {
-      ChannelAlphaVector = static_cast<float*>(std::malloc(sizeof(float)*Width*Height/2));
+      try  { ChannelAlphaVector.resize((Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])); }
+      catch (std::bad_alloc&)  { if (AlphaChannel)  std::free(AlphaChannel);  return  Analyze_Result_MemoryError; }
       break;
     }
     ChannelNo++;
   }
-  if ((ChannelNo<ChannelCount) && !ChannelAlphaVector)
-  {
-    if (AlphaChannel)  std::free(AlphaChannel);
-    return  Analyze_Result_MemoryError;
-  }
   ChannelAlpha = AlphaChannel;
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
-    if (!(ChannelNo && (PixelWidth[ChannelNo]==PixelWidth[ChannelNo-1]) && (PixelHeight[ChannelNo]==PixelHeight[ChannelNo-1])))
+    const int  PW      = PixelWidth[ChannelNo];
+    const int  PH      = PixelHeight[ChannelNo];
+    const int  ChWidth = Width  / PW;
+    const int  ChHeight= Height / PH;
+    // optimization: skip recomputing downsampled alpha if the previous channel had the same subsampling
+    if (!(ChannelNo>0 && (PW==PixelWidth[ChannelNo-1]) && (PH==PixelHeight[ChannelNo-1])))
     {
-      if (PixelWidth[ChannelNo]*PixelHeight[ChannelNo]==1)
+      if (PW*PH==1)
       {
+        // original, not subsampled alpha channel can be used as-is
         ChannelAlpha = AlphaChannel;
       }
       else
       {
-        ChannelAlpha = ChannelAlphaVector;
-        for (k=0 ; k<(Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo]) ; k++)  ChannelAlpha[k] = 0.0f;
+        // explicit zero-init for each subsequent reuse of the same buffer (e.g. U and V in YV12)
+        std::fill(ChannelAlphaVector.begin(), ChannelAlphaVector.end(), 0.0f);
+        ChannelAlpha = ChannelAlphaVector.data();
+        const float  PxCount = static_cast<float>(PW*PH);
         for (y=0 ; y<Height ; y++)
         {
-          for(x=0 ; x<Width ; x++)
+          const int  ChRowStart = ChWidth * (y/PH);
+          for (x=0 ; x<Width ; x++)
           {
-            ChannelAlpha[(Width/PixelWidth[ChannelNo])*(y/PixelHeight[ChannelNo])+(x/PixelWidth[ChannelNo])] += AlphaChannel[Width*y+x]/static_cast<float>(PixelWidth[ChannelNo]*PixelHeight[ChannelNo]);
+            ChannelAlpha[ChRowStart + x/PW] += AlphaChannel[Width*y+x] / PxCount;
           }
         }
       }
     }
     Sum1Ptr = Sum1[ChannelNo].data();
     DestPtr = DestData[ChannelNo];
-    for (y=0 ; y<Height/PixelHeight[ChannelNo] ; y++)
+    for (y=0 ; y<ChHeight ; y++)
     {
-      for (x=0 ; x<Width/PixelWidth[ChannelNo] ; x++)
+      for (x=0 ; x<ChWidth ; x++)
       {
-        PixelValue = ChannelAlpha[(Width/PixelWidth[ChannelNo])*y+x];
-        PixelValue = (PixelValue>0.0)?((static_cast<double>(Sum1Ptr[(Width/PixelWidth[ChannelNo])*y+x])/static_cast<double>(FrameCount))-(1.0-PixelValue)*ChannelNMAverage[ChannelNo])/PixelValue:(static_cast<double>(Sum1Ptr[(Width/PixelWidth[ChannelNo])*y+x])/static_cast<double>(FrameCount));
+        const int  ChIdx = ChWidth*y+x;
+        PixelValue = ChannelAlpha[ChIdx];
+        PixelValue = (PixelValue>0.0)?((static_cast<double>(Sum1Ptr[ChIdx])/static_cast<double>(FrameCount))-(1.0-PixelValue)*ChannelNMAverage[ChannelNo])/PixelValue:(static_cast<double>(Sum1Ptr[ChIdx])/static_cast<double>(FrameCount));
         PixelValue += 0x80;
         if (PixelValue<0x00)  PixelValue = 0x00;
         if (PixelValue>0xFF)  PixelValue = 0xFF;
@@ -3045,7 +3051,6 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       }
     }
   }
-  if (ChannelAlphaVector)  std::free(ChannelAlphaVector);
   if (AlphaChannel)  std::free(AlphaChannel);
   if (DestVideoInfo->height>SrcVideoInfo->height)
   {
