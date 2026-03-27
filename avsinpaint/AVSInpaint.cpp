@@ -270,7 +270,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   bool  ChromaTensor;
   double  PAR, Radius, Sharpness, PreBlur, PostBlur, ChromaWeight, PreBlurSize, PostBlurSize;
   int  Stride[MaxChannelCount], ChromaPixelWidth[MaxChannelCount], ChromaPixelHeight[MaxChannelCount];
-  char * ErrorText;
+  const char * ErrorText;
   InpaintDataStruct * InpaintData;
 
   /* Create new filter */
@@ -569,7 +569,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   int  FramePitch[MaxChannelCount], LumaPitch, * ChromaPitch;
   int  k, x, y, PixelNo, ChannelNo;
   double  CoherenceStrength, CoherenceDirectionX, CoherenceDirectionY, TensorXX, TensorXY, TensorYY, Value;
-  char * ErrorText;
+  const char * ErrorText;
   /* Values given by the user */
   double  PixelWidth2, PixelHeight2;
   double  LumaWeight, ChromaWeight;
@@ -948,7 +948,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   AVS_FilterInfo * FilterInfo;
   DeblendDataStruct * DeblendData;
   int  ChannelCount, ChannelNo;
-  char * ErrorText;
+  const char * ErrorText;
 
   /* We get all input clips and video info pointers */
   SrcClipValue = avs_array_elt(Args,0);
@@ -1143,7 +1143,7 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   BYTE * FrameData[MaxChannelCount];
   const  BYTE * LogoFrameData[MaxChannelCount], * AlphaFrameData[MaxChannelCount], * AlphaData;
   int  ChannelNo;
-  char * ErrorText;
+  const char * ErrorText;
 
   /* Get some data from the data structure, load frames and get data pointers */
   DeblendData = static_cast<DeblendDataStruct*>(FilterInfo->user_data);
@@ -1260,7 +1260,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   double  DeviationWeight, SubsamplingWeight;
   int32_t  MaskSize, AnalyzeResult;
   BYTE * Mask;
-  char * ErrorText;
+  const char * ErrorText;
   /* For mask-processing */
   int  x, y;
 
@@ -1456,7 +1456,7 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
   AVS_VideoInfo * VideoInfo;
   int  Stride[MaxChannelCount];
   double  PAR, Scale;
-  char * ErrorText;
+  const char * ErrorText;
 
 
   /* Extract values from AVS_Value container, throw errors if necessary */
@@ -1524,7 +1524,7 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
   float * DistFcn, * u;
   double  Scale;
   BYTE * FrameData[MaxChannelCount], * DataPtr;
-  char * ErrorText;
+  const char * ErrorText;
 
   DistFcnData = static_cast<DistanceFunctionDataStruct*>(FilterInfo->user_data);
   Width = DistFcnData->Width;
