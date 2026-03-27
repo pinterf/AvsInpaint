@@ -239,8 +239,6 @@ void  DeblendStatic(BYTE  Data[],  const  DoubleByte  LogoData[],  const  BYTE  
 int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  BYTE *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo);
 /* Analyze tools */
 int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  AVS_Clip *  SrcClip,  unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,  double  DeviationWeight,  double  SubsamplingWeight);
-int  SortCompareSum1(const void *  Value1,  const void *  Value2);
-int  SortCompareSum2(const void *  Value1,  const void *  Value2);
 
 
 
@@ -2651,8 +2649,11 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   int  SrcPtrDelta, DividedWidth, SrcStride;
   /* Variables for Phase 2 */
   BYTE * ChannelMask, * ChannelMaskVector;
-  Analyze_Sum1Type * NMSum1;
-  Analyze_Sum2Type * NMSum2;
+  /* Non-masked pixel sums collected per channel for computing average and variance.
+     Allocated at full-frame size (Width*Height-MaskSize) as an upper bound;
+     only the first k elements are filled and sorted per channel iteration. */
+  std::vector<Analyze_Sum1Type> NMSum1;
+  std::vector<Analyze_Sum2Type> NMSum2;  // only populated when ComputeAlpha
   double  ChannelNMSum1[MaxChannelCount], ChannelNMSum2[MaxChannelCount], KahanSum, KahanC, KahanY, KahanT;
   int  ChannelMaskSize;
   /* Variables for Phase 3 */
@@ -2801,15 +2802,13 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
     }
     ChannelNo++;
   }
-  NMSum1 = static_cast<Analyze_Sum1Type*>(std::malloc(sizeof(Analyze_Sum1Type)*(Width*Height-MaskSize)));
-  if (ComputeAlpha)  NMSum2 = static_cast<Analyze_Sum2Type*>(std::malloc(sizeof(Analyze_Sum2Type)*(Width*Height-MaskSize)));  else  NMSum2 = nullptr;
-  if (((ChannelNo<ChannelCount) && !ChannelMaskVector) || !NMSum1 || (ComputeAlpha && !NMSum2))
+  try
   {
-    if (NMSum2)  std::free(NMSum2);
-    if (NMSum1)  std::free(NMSum1);
-    if (ChannelMaskVector)  std::free(ChannelMaskVector);
-    return  Analyze_Result_MemoryError;
+    NMSum1.resize(Width*Height-MaskSize);
+    if (ComputeAlpha)  NMSum2.resize(Width*Height-MaskSize);
   }
+  catch (std::bad_alloc&)  { if (ChannelMaskVector)  std::free(ChannelMaskVector);  return  Analyze_Result_MemoryError; }
+  if ((ChannelNo<ChannelCount) && !ChannelMaskVector)  { return  Analyze_Result_MemoryError; }
   /** Main loop in Phase 2: Each channel is processed completely **/
   ChannelMask = Mask;
   ChannelMaskSize = static_cast<int>(MaskSize);
@@ -2875,26 +2874,32 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
     /* Assertion: If mask size has changed, something must be wrong !! */
     if ((Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])!=ChannelMaskSize+k)
     {
-      if (NMSum2)  std::free(NMSum2);
-      if (NMSum1)  std::free(NMSum1);
       if (ChannelMaskVector)  std::free(ChannelMaskVector);
       return  Analyze_Result_GeneralError;
     }
-    std::qsort(NMSum1,(Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])-ChannelMaskSize,sizeof(Analyze_Sum1Type),SortCompareSum1);
+    // Always: k == total_channel_pixels - ChannelMaskSize
+    // as the assertion above checks that.
+
+    /* Sort only the first k elements (non-masked pixels for this channel, a subset of the full buffer).
+       NMSum1: sorted by absolute value — reduces Kahan summation numerical error by adding small values first.
+       NMSum2: sorted ascending — same reason. */
+    const int  NMCount = k;  // number of non-masked pixels collected for this channel
+    std::sort(NMSum1.begin(), NMSum1.begin()+NMCount,
+              [](Analyze_Sum1Type a, Analyze_Sum1Type b){ return std::abs(a) < std::abs(b); });
     KahanSum = 0.0;
     KahanC = 0.0;
-    for (k=0 ; k<((Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])-ChannelMaskSize) ; k++)  KahanAdditionMakro(KahanSum,NMSum1[k],KahanC,KahanT,KahanY);
+    for (k=0 ; k<NMCount ; k++)  KahanAdditionMakro(KahanSum,NMSum1[k],KahanC,KahanT,KahanY);
     ChannelNMSum1[ChannelNo] = KahanSum;
     if (ComputeAlpha)
     {
-      std::qsort(NMSum2,(Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])-ChannelMaskSize,sizeof(Analyze_Sum2Type),SortCompareSum2);
+      std::sort(NMSum2.begin(), NMSum2.begin()+NMCount);  // ascending, unsigned values
       KahanSum = 0.0;
       KahanC = 0.0;
-      for (k=0 ; k<((Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])-ChannelMaskSize) ; k++)  KahanAdditionMakro(KahanSum,NMSum2[k],KahanC,KahanT,KahanY);
+      for (k=0 ; k<NMCount ; k++)  KahanAdditionMakro(KahanSum,NMSum2[k],KahanC,KahanT,KahanY);
       ChannelNMSum2[ChannelNo] = KahanSum;
     }
     /* Compute averages and variances of non-masked pixels */
-    k = (Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])-ChannelMaskSize;
+    k = NMCount;
     ChannelNMAverage[ChannelNo] = ChannelNMSum1[ChannelNo]/k/FrameCount;
     if (ComputeAlpha)
     {
@@ -2903,8 +2908,6 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       if (!(ChannelNMVariance[ChannelNo]>0.0))  ChannelNMVariance[ChannelNo] = 0.0;
     }
   }
-  if (NMSum2)  std::free(NMSum2);
-  if (NMSum1)  std::free(NMSum1);
   if (ChannelMaskVector)  std::free(ChannelMaskVector);
   /*** PHASE 3: Compute transparency values and color values for each pixel of the logo (each mask pixel) and store in destination frame ***/
   /** We start with the alpha channel - it is needed to compute the color channels **/
@@ -3097,24 +3100,3 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
 
 
 
-int  SortCompareSum1(const void *  Value1,  const void *  Value2)
-{
-  #define  Value2X(X)  (*static_cast<const Analyze_Sum1Type*>(X))
-  #define  ValueX(X)  (Value2X(X)*(Value2X(X)>0?+1:-1))
-  if (ValueX(Value1)<ValueX(Value2))  return  -1;
-  if (ValueX(Value1)>ValueX(Value2))  return  +1;
-  return  0;
-  #undef  ValueX
-  #undef  Value2X
-}
-
-
-
-int  SortCompareSum2(const void *  Value1,  const void *  Value2)
-{
-  #define  ValueX(X)  (*static_cast<const Analyze_Sum2Type*>(X))
-  if (ValueX(Value1)<ValueX(Value2))  return  -1;
-  if (ValueX(Value1)>ValueX(Value2))  return  +1;
-  return  0;
-  #undef  ValueX
-}
