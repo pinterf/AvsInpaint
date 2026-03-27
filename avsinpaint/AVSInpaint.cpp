@@ -102,6 +102,8 @@ constexpr int  MaxChannelCount  = 4;  /* Maximal number of color channels for al
 #include  <cfloat>
 #include  <cstring>
 #include  <algorithm>
+#include  <array>
+#include  <vector>
 
 #include  "AviSynth_C.h"
 
@@ -2629,8 +2631,8 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   const  AVS_VideoInfo * SrcVideoInfo;
   int  Width, Height;
   int  PixelWidth[MaxChannelCount], PixelHeight[MaxChannelCount], FrameStride[MaxChannelCount];
-  Analyze_Sum1Type * Sum1[MaxChannelCount];
-  Analyze_Sum2Type * Sum2[MaxChannelCount];
+  std::array<std::vector<Analyze_Sum1Type>, MaxChannelCount> Sum1;
+  std::array<std::vector<Analyze_Sum2Type>, MaxChannelCount> Sum2;
   Analyze_Sum1Type * Sum1Ptr;
   Analyze_Sum2Type * Sum2Ptr;
   int  x, y, ChannelNo, ChannelCount;
@@ -2671,35 +2673,17 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   Width = SrcVideoInfo->width;
   Height = SrcVideoInfo->height;
   FrameCount = SrcVideoInfo->num_frames;
-  for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)  Sum1[ChannelNo] = nullptr;
-  for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)  Sum2[ChannelNo] = nullptr;
   ChannelCount = GetFramePointers(nullptr,nullptr,nullptr,nullptr,FrameStride,PixelWidth,PixelHeight,SrcVideoInfo->pixel_type)-(DestVideoInfo->height>SrcVideoInfo->height?0:1);
   /* Allocate memory for sum and square-sum vectors (depending on color space) */
   if (ChannelCount<=0)  return  Analyze_Result_GeneralError;  /* Unknown color space (a bug!) */
-  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Sum1[ChannelNo] = static_cast<Analyze_Sum1Type*>(std::malloc(sizeof(Analyze_Sum1Type)*Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo]));
-  if (ComputeAlpha)  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Sum2[ChannelNo] = static_cast<Analyze_Sum2Type*>(std::malloc(sizeof(Analyze_Sum2Type)*Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo]));
-  ChannelNo = 0;
-  while (ChannelNo<ChannelCount)
+  try
   {
-    if (!Sum1[ChannelNo])  break;
-    if (ComputeAlpha && !Sum2[ChannelNo])  break;
-    ChannelNo++;
+    // resize performs zero-init as well
+    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Sum1[ChannelNo].resize(Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo]);
+    if (ComputeAlpha)  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Sum2[ChannelNo].resize(Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo]);
   }
-  if (ChannelNo<ChannelCount)
-  {
-    for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)  if (Sum1[ChannelNo])  std::free(Sum1[ChannelNo]);
-    for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)  if (Sum2[ChannelNo])  std::free(Sum2[ChannelNo]);
-    return  Analyze_Result_MemoryError;
-  }
+  catch (std::bad_alloc&)  { return  Analyze_Result_MemoryError; }
   /*** PHASE 1: Summing up (over time) all pixel values and their squares (Dear user: this will take some time!!) ***/
-  /* Initialize main loop */
-  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
-  {
-    Sum1Ptr = Sum1[ChannelNo];
-    if (Sum1Ptr)  for (k=0 ; k<Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo] ; k++)  Sum1Ptr[k] = 0;
-    Sum2Ptr = Sum2[ChannelNo];
-    if (Sum2Ptr)  for (k=0 ; k<Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo] ; k++)  Sum2Ptr[k] = 0;
-  }
   SrcFrame = nullptr;
   // This ensures no individual accumulator cell overflows regardless of resolution,
   // each cell accumulates exactly FramesLeft values, bounded by INT32_MAX/UINT32_MAX limits.
@@ -2724,8 +2708,8 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
     /* Loop over all color channels */
     for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
     {
-      Sum1Ptr = Sum1[ChannelNo];
-      Sum2Ptr = Sum2[ChannelNo];
+      Sum1Ptr = Sum1[ChannelNo].data();
+      Sum2Ptr = ComputeAlpha ? Sum2[ChannelNo].data() : nullptr;
       SrcPtr = SrcData[ChannelNo];
       SrcStride = FrameStride[ChannelNo];
       DividedWidth = Width/PixelWidth[ChannelNo];
@@ -2771,8 +2755,8 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       Sum2Max = 0;
       for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
       {
-        Sum1Ptr = Sum1[ChannelNo];
-        Sum2Ptr = Sum2[ChannelNo];
+        Sum1Ptr = Sum1[ChannelNo].data();
+        Sum2Ptr = ComputeAlpha ? Sum2[ChannelNo].data() : nullptr;
         for (k=0 ; k<Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo] ; k++)
         {
           if (Sum1Max<((Sum1Ptr[k]<0)?(-Sum1Ptr[k]):(Sum1Ptr[k])))  Sum1Max = (Sum1Ptr[k]<0)?(-Sum1Ptr[k]):(Sum1Ptr[k]);
@@ -2790,12 +2774,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   if (ComputeAlpha)  if (FrameNo<2)  Result = Analyze_Result_GeneralError;
   if (FrameNo<1)  Result = Analyze_Result_GeneralError;
   /* If a (serious) error occured, we return */
-  if (Result!=Analyze_Result_OK)
-  {
-    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum1[ChannelNo])  std::free(Sum1[ChannelNo]);
-    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum2[ChannelNo])  std::free(Sum2[ChannelNo]);
-    return  Result;
-  }
+  if (Result!=Analyze_Result_OK)  return  Result;
   FrameCount = FrameNo;  /* From now on this is the number of frames processed (may be less than the real FrameCount) */
   /* Current state:
      Sum1[ChNo][Width/PxWidth[ChNo]*y+x] contains the sum of all values (minus 0x80) of the pixel in position (x,y) in color channel (ChNo) over frames 0..FrameCount-1
@@ -2827,8 +2806,6 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
     if (NMSum2)  std::free(NMSum2);
     if (NMSum1)  std::free(NMSum1);
     if (ChannelMaskVector)  std::free(ChannelMaskVector);
-    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum2[ChannelNo])  std::free(Sum2[ChannelNo]);
-    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum1[ChannelNo])  std::free(Sum1[ChannelNo]);
     return  Analyze_Result_MemoryError;
   }
   /** Main loop in Phase 2: Each channel is processed completely **/
@@ -2861,8 +2838,8 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
         for (k=0 ; k<(Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo]) ; k++)  ChannelMaskSize += ChannelMask[k]?1:0;
       }
     }
-    Sum1Ptr = Sum1[ChannelNo];
-    Sum2Ptr = Sum2[ChannelNo];
+    Sum1Ptr = Sum1[ChannelNo].data();
+    Sum2Ptr = ComputeAlpha ? Sum2[ChannelNo].data() : nullptr;
     k = 0;
     if (ComputeAlpha)
     {
@@ -2899,8 +2876,6 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       if (NMSum2)  std::free(NMSum2);
       if (NMSum1)  std::free(NMSum1);
       if (ChannelMaskVector)  std::free(ChannelMaskVector);
-      for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum2[ChannelNo])  std::free(Sum2[ChannelNo]);
-      for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum1[ChannelNo])  std::free(Sum1[ChannelNo]);
       return  Analyze_Result_GeneralError;
     }
     std::qsort(NMSum1,(Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])-ChannelMaskSize,sizeof(Analyze_Sum1Type),SortCompareSum1);
@@ -2932,12 +2907,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   /*** PHASE 3: Compute transparency values and color values for each pixel of the logo (each mask pixel) and store in destination frame ***/
   /** We start with the alpha channel - it is needed to compute the color channels **/
   AlphaChannel = static_cast<float*>(std::malloc(sizeof(float)*Width*Height));
-  if (!AlphaChannel)
-  {
-    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum1[ChannelNo])  std::free(Sum1[ChannelNo]);
-    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum2[ChannelNo])  std::free(Sum2[ChannelNo]);
-    return  Analyze_Result_MemoryError;
-  }
+  if (!AlphaChannel)  return  Analyze_Result_MemoryError;
   if (ComputeAlpha)
   {
     /* Here is THE CORE ALGORITHM for computing the alpha channel out of all the variances gathered before */
@@ -2963,8 +2933,8 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
           AlphaSum = 0.0;
           for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
           {
-            Sum1Ptr = Sum1[ChannelNo];
-            Sum2Ptr = Sum2[ChannelNo];
+            Sum1Ptr = Sum1[ChannelNo].data();
+            Sum2Ptr = Sum2[ChannelNo].data();
             k = (Width/PixelWidth[ChannelNo])*(y/PixelHeight[ChannelNo])+(x/PixelWidth[ChannelNo]);
             PixelValue = static_cast<double>(Sum2Ptr[k])-static_cast<double>(Sum1Ptr[k])*static_cast<double>(Sum1Ptr[k])/FrameCount;
             if (!(PixelValue>0.0))  PixelValue = 0.0;
@@ -2989,13 +2959,12 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
     for (k=0 ; k<Width*Height ; k++)  AlphaChannel[k] = static_cast<float>(Mask[k])/static_cast<float>(0xFF);
   }
   /* Now Sum2 is not needed anymore */
-  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum2[ChannelNo])  std::free(Sum2[ChannelNo]);
+  for (auto& v : Sum2)  { v.clear(); v.shrink_to_fit(); }
   /** The destination frame pointers are determined **/
   /* Now we're approaching color-space dependent code !! */
   if (!GetFramePointers(DestFrame,DestData,nullptr,FramePitch,nullptr,nullptr,nullptr,SrcVideoInfo->pixel_type))
   {
     if (AlphaChannel)  std::free(AlphaChannel);
-    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum1[ChannelNo])  std::free(Sum1[ChannelNo]);
     return  Analyze_Result_DestFrameError;
   }
   if (avs_is_yuv(SrcVideoInfo))
@@ -3025,6 +2994,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   while (ChannelNo<ChannelCount)
   {
     /* Only needed if PixelWidth[CC]*PixelHeight[CC]>1 for at least one color channel */
+    /* zero with or height means that the channel is unused */
     if (PixelWidth[ChannelNo]*PixelHeight[ChannelNo]>1)
     {
       ChannelAlphaVector = static_cast<float*>(std::malloc(sizeof(float)*Width*Height/2));
@@ -3035,7 +3005,6 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   if ((ChannelNo<ChannelCount) && !ChannelAlphaVector)
   {
     if (AlphaChannel)  std::free(AlphaChannel);
-    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum1[ChannelNo])  std::free(Sum1[ChannelNo]);
     return  Analyze_Result_MemoryError;
   }
   ChannelAlpha = AlphaChannel;
@@ -3060,7 +3029,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
         }
       }
     }
-    Sum1Ptr = Sum1[ChannelNo];
+    Sum1Ptr = Sum1[ChannelNo].data();
     DestPtr = DestData[ChannelNo];
     for (y=0 ; y<Height/PixelHeight[ChannelNo] ; y++)
     {
@@ -3078,7 +3047,6 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   }
   if (ChannelAlphaVector)  std::free(ChannelAlphaVector);
   if (AlphaChannel)  std::free(AlphaChannel);
-  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (Sum1[ChannelNo])  std::free(Sum1[ChannelNo]);
   if (DestVideoInfo->height>SrcVideoInfo->height)
   {
     if (avs_is_yuv(SrcVideoInfo))
