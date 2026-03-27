@@ -2648,7 +2648,11 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   const  BYTE * SrcPtr;
   int  SrcPtrDelta, DividedWidth, SrcStride;
   /* Variables for Phase 2 */
-  BYTE * ChannelMask, * ChannelMaskVector;
+  BYTE * ChannelMask;
+  /* Downsampled logo mask for subsampled chroma channels (same layout as ChannelAlphaVector).
+     Each macro-pixel is masked if any of its full-res pixels is masked.
+     Not needed for RGB or YV24 where all channels share full resolution. */
+  std::vector<BYTE> ChannelMaskVector;
   /* Non-masked pixel sums collected per channel for computing average and variance.
      Allocated at full-frame size (Width*Height-MaskSize) as an upper bound;
      only the first k elements are filled and sorted per channel iteration. */
@@ -2791,52 +2795,55 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
      to reduce numerical errors. Hopefully we don't end up with
      negative variances ...                                         */
      /* ChannelMask will store the sub-sampled logo mask, NMSum2 is an array for sorting the squared pixel sums */
-  ChannelMaskVector = nullptr;
   ChannelNo = 0;
   while (ChannelNo<ChannelCount)
   {
-    if (PixelWidth[ChannelNo]*PixelHeight[ChannelNo]>1)
-    {
-      ChannelMaskVector = static_cast<BYTE*>(std::malloc(sizeof(BYTE)*Width*Height/2));
-      break;
-    }
+    if (PixelWidth[ChannelNo]*PixelHeight[ChannelNo]>1)  break;
     ChannelNo++;
   }
+  // ChannelNo is the first subsampled channel number and exited early, 
+  // or reaches ChannelCount is no subsampled channel is present (e.g. RGB or YV24).
   try
   {
+    if (ChannelNo<ChannelCount)  ChannelMaskVector.resize((Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo]));
     NMSum1.resize(Width*Height-MaskSize);
     if (ComputeAlpha)  NMSum2.resize(Width*Height-MaskSize);
   }
-  catch (std::bad_alloc&)  { if (ChannelMaskVector)  std::free(ChannelMaskVector);  return  Analyze_Result_MemoryError; }
-  if ((ChannelNo<ChannelCount) && !ChannelMaskVector)  { return  Analyze_Result_MemoryError; }
+  catch (std::bad_alloc&)  { return  Analyze_Result_MemoryError; }
   /** Main loop in Phase 2: Each channel is processed completely **/
   ChannelMask = Mask;
   ChannelMaskSize = static_cast<int>(MaskSize);
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
-    if (!ChannelNo || PixelWidth[ChannelNo]!=PixelWidth[ChannelNo-1] || PixelHeight[ChannelNo]!=PixelHeight[ChannelNo-1])
+    const int  PW      = PixelWidth[ChannelNo];
+    const int  PH      = PixelHeight[ChannelNo];
+    const int  ChWidth = Width  / PW;
+    const int  ChHeight= Height / PH;
+    if (!ChannelNo || PW!=PixelWidth[ChannelNo-1] || PH!=PixelHeight[ChannelNo-1])
     {
-      if (PixelWidth[ChannelNo]*PixelHeight[ChannelNo]==1)
+      if (PW*PH==1)
       {
+        // not subsampled, mask can be used as is
         ChannelMask = Mask;
         ChannelMaskSize = static_cast<int>(MaskSize);
       }
       else
       {
-        ChannelMask = ChannelMaskVector;
-        /* Clear and fill ChannelMask */
-        for (k=0 ; k<(Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo]) ; k++)  ChannelMask[k] = 0;
+        ChannelMask = ChannelMaskVector.data();
+        /* Reused per subsampled channel (e.g. U and V in YV12) — must be zeroed before accumulation */
+        std::fill(ChannelMaskVector.begin(), ChannelMaskVector.end(), BYTE(0));
         for (y=0 ; y<Height ; y++)
         {
+          const int  ChRowStart = ChWidth * (y/PH);
           for (x=0 ; x<Width ; x++)
           {
-            /* Each makro-pixel *is* masked whenever one of its smaller (real-sized) pixels is masked */
-            ChannelMask[(Width/PixelWidth[ChannelNo])*(y/PixelHeight[ChannelNo])+(x/PixelWidth[ChannelNo])] += Mask[Width*y+x]?1:0;
+            /* Each macro-pixel is masked if any of its full-res pixels is masked */
+            ChannelMask[ChRowStart + x/PW] += Mask[Width*y+x] ? 1 : 0;
           }
         }
         /* Determine size of sub-sampled mask */
         ChannelMaskSize = 0;
-        for (k=0 ; k<(Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo]) ; k++)  ChannelMaskSize += ChannelMask[k]?1:0;
+        for (k=0 ; k<ChWidth*ChHeight ; k++)  ChannelMaskSize += ChannelMask[k] ? 1 : 0;
       }
     }
     Sum1Ptr = Sum1[ChannelNo].data();
@@ -2844,14 +2851,14 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
     k = 0;
     if (ComputeAlpha)
     {
-      for (y=0 ; y<Height/PixelHeight[ChannelNo] ; y++)
+      for (y=0 ; y<ChHeight ; y++)
       {
-        for (x=0 ; x<Width/PixelWidth[ChannelNo] ; x++)
+        for (x=0 ; x<ChWidth ; x++)
         {
-          if (!ChannelMask[(Width/PixelWidth[ChannelNo])*y+x])
+          if (!ChannelMask[ChWidth*y+x])
           {
-            NMSum1[k] = Sum1Ptr[(Width/PixelWidth[ChannelNo])*y+x];
-            NMSum2[k] = Sum2Ptr[(Width/PixelWidth[ChannelNo])*y+x];
+            NMSum1[k] = Sum1Ptr[ChWidth*y+x];
+            NMSum2[k] = Sum2Ptr[ChWidth*y+x];
             k++;
           }
         }
@@ -2859,24 +2866,20 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
     }
     else
     {
-      for (y=0 ; y<Height/PixelHeight[ChannelNo] ; y++)
+      for (y=0 ; y<ChHeight ; y++)
       {
-        for (x=0 ; x<Width/PixelWidth[ChannelNo] ; x++)
+        for (x=0 ; x<ChWidth ; x++)
         {
-          if (!ChannelMask[(Width/PixelWidth[ChannelNo])*y+x])
+          if (!ChannelMask[ChWidth*y+x])
           {
-            NMSum1[k] = Sum1Ptr[(Width/PixelWidth[ChannelNo])*y+x];
+            NMSum1[k] = Sum1Ptr[ChWidth*y+x];
             k++;
           }
         }
       }
     }
     /* Assertion: If mask size has changed, something must be wrong !! */
-    if ((Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])!=ChannelMaskSize+k)
-    {
-      if (ChannelMaskVector)  std::free(ChannelMaskVector);
-      return  Analyze_Result_GeneralError;
-    }
+    if (ChWidth*ChHeight != ChannelMaskSize+k)  return  Analyze_Result_GeneralError;
     // Always: k == total_channel_pixels - ChannelMaskSize
     // as the assertion above checks that.
 
@@ -2908,7 +2911,6 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       if (!(ChannelNMVariance[ChannelNo]>0.0))  ChannelNMVariance[ChannelNo] = 0.0;
     }
   }
-  if (ChannelMaskVector)  std::free(ChannelMaskVector);
   /*** PHASE 3: Compute transparency values and color values for each pixel of the logo (each mask pixel) and store in destination frame ***/
   /** We start with the alpha channel - it is needed to compute the color channels **/
   AlphaChannel = static_cast<float*>(std::malloc(sizeof(float)*Width*Height));
