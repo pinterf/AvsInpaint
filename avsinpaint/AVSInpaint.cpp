@@ -60,10 +60,10 @@ constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= real
 /* FMMHeapInitialSize is inlined at usage as: 4*(Width+Height+FMMHeapDelta) */
 
 
-typedef  signed long int  Analyze_Sum1Type;  /* Data types used for summation in Analyze function */
-typedef  unsigned long int  Analyze_Sum2Type;
-#define  Analyze_Sum1Max  ((LONG_MAX+LONG_MIN>0)?(-LONG_MIN):(+LONG_MAX))  /* Maximal values for summation data types (summation will stop here) */
-#define  Analyze_Sum2Max  ULONG_MAX
+typedef  int32_t   Analyze_Sum1Type;  /* Data types used for summation in Analyze function */
+typedef  uint32_t  Analyze_Sum2Type;
+#define  Analyze_Sum1Max  INT32_MAX   /* Maximal values for summation data types (summation will stop here) */
+#define  Analyze_Sum2Max  UINT32_MAX
 
 constexpr int  Analyze_Result_OK  = 0;
 constexpr int  Analyze_Result_GeneralError  = -1;
@@ -98,6 +98,7 @@ constexpr int  MaxChannelCount  = 4;  /* Maximal number of color channels for al
 #include  <cstdlib>
 #include  <cmath>
 #include  <climits>
+#include  <cstdint>
 #include  <cfloat>
 #include  <cstring>
 #include  <algorithm>
@@ -236,7 +237,7 @@ void  DeblendDynamicSubsampled(BYTE  Data[],  const  BYTE  LogoData[],  const  B
 void  DeblendStatic(BYTE  Data[],  const  DoubleByte  LogoData[],  const  BYTE  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height);
 int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  BYTE *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo);
 /* Analyze tools */
-signed long  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  AVS_Clip *  SrcClip,  unsigned char  Mask[],  long  MaskSize,  int  ComputeAlpha,  double  DeviationWeight,  double  SubsamplingWeight);
+int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  AVS_Clip *  SrcClip,  unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,  double  DeviationWeight,  double  SubsamplingWeight);
 int  SortCompareSum1(const void *  Value1,  const void *  Value2);
 int  SortCompareSum2(const void *  Value1,  const void *  Value2);
 
@@ -1258,7 +1259,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   int  MaskStride, MaskPitch;
   bool  MaskGiven, ComputeAlpha;
   double  DeviationWeight, SubsamplingWeight;
-  signed long  MaskSize, AnalyzeResult;
+  int32_t  MaskSize, AnalyzeResult;
   BYTE * Mask;
   char * ErrorText;
   /* For mask-processing */
@@ -2375,7 +2376,7 @@ void  GetStructureTensor(double *  TensorXX,  double *  TensorXY,  double *  Ten
 
 
 bool  GetChannelTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,  float  Gchi[],  float  Gchiu[],  BYTE  chi[],  int  x,  int  y,  int  Width,  int  Height,  double  BlurKernelX[],  int  BlurKernelXSize,  double  BlurKernelY[],  int  BlurKernelYSize)
-/* This (fairly) realized formula (21) of Bornemann/März-Paper */
+/* This (fairly) realized formula (21) of Bornemann/MÃ¤rz-Paper */
 /* This function uses forward differences. Anything else must be done by providing an appropriate kernel and by modifying x,y */
 {
   double  xx, xy, yy, chi0;
@@ -2617,11 +2618,11 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  BYTE *  AlphaDataCh
 /****************************************************************
                       Analyze tools
  ****************************************************************/
-signed long  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  AVS_Clip *  SrcClip,  unsigned char  Mask[],  long  MaskSize,  int  ComputeAlpha,  double  DeviationWeight,  double  SubsamplingWeight)
+int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  AVS_Clip *  SrcClip,  unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,  double  DeviationWeight,  double  SubsamplingWeight)
 /* This function evaluate SrcClip and estimates the logo */
 {
   const unsigned int Sum1MaxDelta = 0x80u;
-  const unsigned long Sum2MaxDelta = static_cast<unsigned long>(Sum1MaxDelta)*static_cast<unsigned long>(Sum1MaxDelta);
+  const uint32_t Sum2MaxDelta = static_cast<uint32_t>(Sum1MaxDelta)*static_cast<uint32_t>(Sum1MaxDelta);
   #define  KahanAdditionMakro(S,A,C,T,Y)  {Y=(A);Y-=C;T=S+Y;C=T-S;C-=Y;S=T;}  /* Kahan's summation algorithm reduces numerical problems - hopefully compiler optimization won't destroy this */
 
   /* Variables storing general stuff about source clip and destination frame */
@@ -2634,7 +2635,7 @@ signed long  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo
   Analyze_Sum2Type * Sum2Ptr;
   int  x, y, ChannelNo, ChannelCount;
   unsigned int  FrameCount;
-  long  k;
+  int32_t  k;
   double  ChannelNMVariance[MaxChannelCount], ChannelNMAverage[MaxChannelCount];
   int  Result;
   int  FramePitch[MaxChannelCount];
@@ -2700,6 +2701,8 @@ signed long  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo
     if (Sum2Ptr)  for (k=0 ; k<Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo] ; k++)  Sum2Ptr[k] = 0;
   }
   SrcFrame = nullptr;
+  // This ensures no individual accumulator cell overflows regardless of resolution,
+  // each cell accumulates exactly FramesLeft values, bounded by INT32_MAX/UINT32_MAX limits.
   FramesLeft = FrameCount;
   if (ComputeAlpha)  if (FramesLeft>Analyze_Sum2Max/Sum2MaxDelta)  FramesLeft = static_cast<unsigned int>(Analyze_Sum2Max/Sum2MaxDelta);
   if (FramesLeft>static_cast<unsigned int>(Analyze_Sum1Max/Sum1MaxDelta))  FramesLeft = static_cast<unsigned int>(Analyze_Sum1Max/Sum1MaxDelta);
@@ -3114,7 +3117,7 @@ signed long  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo
       }
     }
   }
-  return  static_cast<signed long>(FrameCount);
+  return  static_cast<int32_t>(FrameCount);
 
   #undef  KahanAdditionMakro
 }
