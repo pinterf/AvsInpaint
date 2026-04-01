@@ -591,9 +591,12 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   /* Given by mask */
   int  Width, Height, MaskPixelCount;
   unsigned int * MaskPixelOrder;
-  BYTE * chiLuma, * chiChroma;
-  float * GchiLuma, * GchiChroma;
-  float * GchiuLuma, * GchiuChromas[MaxChannelCount], * GchiuChroma;
+  std::vector<BYTE> chiLumaVec, chiChromaVec;
+  BYTE * chiLuma = nullptr, * chiChroma = nullptr;
+  std::vector<float> GchiLumaVec, GchiChromaVec, GchiuLumaVec;
+  float * GchiLuma = nullptr, * GchiChroma = nullptr, * GchiuLuma = nullptr;
+  std::vector<float> GchiuChromasVec[MaxChannelCount-1];
+  float * GchiuChromas[MaxChannelCount], * GchiuChroma;
 
   InpaintData = static_cast<InpaintDataStruct*>(FilterInfo->user_data);
   /* If the logo is dynamic, we prepare the mask stuff */
@@ -697,48 +700,35 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   if (Frame)  GetFramePointers(Frame,FrameData,nullptr,FramePitch,nullptr,nullptr,nullptr,InpaintData->PixelType);
   if (!FrameData[0])  ErrorText = "InpaintLogo: Could not get pixel data pointers";
   /* Allocate temporary memory */
-  chiLuma = nullptr;
-  GchiLuma = nullptr;
-  GchiuLuma = nullptr;
-  chiChroma = nullptr;
-  GchiChroma = nullptr;
   for (ChannelNo=0 ; ChannelNo<MaxChannelCount-1 ; ChannelNo++)  GchiuChromas[ChannelNo] = nullptr;
-  chiLuma = (InpaintData->StaticMaskData)?static_cast<BYTE*>(std::malloc(sizeof(BYTE)*Width*Height)):MaskData->chiLuma;
-  if (!chiLuma)  ErrorText = "InpaintLogo: Could not allocate memory";
-  if (LumaWeight!=0.0)
+  try
   {
-    GchiLuma = (InpaintData->StaticMaskData)?static_cast<float*>(std::malloc(sizeof(float)*Width*Height)):MaskData->GchiLuma;
-    GchiuLuma = static_cast<float*>(std::malloc(sizeof(float)*Width*Height));
-    if (!(GchiLuma && GchiuLuma))  ErrorText = "InpaintLogo: Could not allocate memory";
-  }
-  chiChroma = (InpaintData->StaticMaskData)?static_cast<BYTE*>(std::malloc(sizeof(BYTE)*Width*Height)):MaskData->chiChroma;
-  if (!chiChroma)  ErrorText = "InpaintLogo: Could not allocate memory";
-  if (ChromaWeight!=0.0)
-  {
-    GchiChroma = (InpaintData->StaticMaskData)?static_cast<float*>(std::malloc(sizeof(float)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight))):MaskData->GchiChroma;
-    if (!GchiChroma)  ErrorText = "InpaintLogo: Could not allocate memory";
-    for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)
+    if (InpaintData->StaticMaskData)  { chiLumaVec.resize(Width*Height);  chiLuma = chiLumaVec.data(); }
+    else  chiLuma = MaskData->chiLuma;
+    if (LumaWeight!=0.0)
     {
-      GchiuChromas[ChannelNo] = static_cast<float*>(std::malloc(sizeof(float)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight)));
-      if (!GchiuChromas[ChannelNo])  ErrorText = "InpaintLogo: Could not allocate memory";
+      if (InpaintData->StaticMaskData)  { GchiLumaVec.resize(Width*Height);  GchiLuma = GchiLumaVec.data(); }
+      else  GchiLuma = MaskData->GchiLuma;
+      GchiuLumaVec.resize(Width*Height);  GchiuLuma = GchiuLumaVec.data();
+    }
+    if (InpaintData->StaticMaskData)  { chiChromaVec.resize(Width*Height);  chiChroma = chiChromaVec.data(); }
+    else  chiChroma = MaskData->chiChroma;
+    if (ChromaWeight!=0.0)
+    {
+      if (InpaintData->StaticMaskData)  { GchiChromaVec.resize((Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));  GchiChroma = GchiChromaVec.data(); }
+      else  GchiChroma = MaskData->GchiChroma;
+      for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)
+      {
+        GchiuChromasVec[ChannelNo].resize((Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
+        GchiuChromas[ChannelNo] = GchiuChromasVec[ChannelNo].data();
+      }
     }
   }
+  catch (std::bad_alloc&)  { ErrorText = "InpaintLogo: Could not allocate memory"; }
   /* Error? Then run away */
   if (ErrorText)
   {
-    for (ChannelNo=0 ; ChannelNo<MaxChannelCount-1 ; ChannelNo++)  if (GchiuChromas[ChannelNo])  std::free(GchiuChromas[ChannelNo]);
-    if (GchiuLuma)  std::free(GchiuLuma);
-    if (InpaintData->StaticMaskData)
-    {
-      if (GchiChroma)  std::free(GchiChroma);
-      if (chiChroma)  std::free(chiChroma);
-      if (GchiLuma)  std::free(GchiLuma);
-      if (chiLuma)  std::free(chiLuma);
-    }
-    else
-    {
-      InpaintPrepareMask(&MaskData,nullptr,InpaintData);
-    }
+    if (!InpaintData->StaticMaskData)  InpaintPrepareMask(&MaskData,nullptr,InpaintData);
     if (Frame)  avs_release_video_frame(Frame);  else  ErrorText = "InpaintLogo: Could not get video Frame";
     FilterInfo->error = ErrorText;
     return  nullptr;
@@ -870,19 +860,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
     }
     if (chiChroma[Width/ChromaPixelWidth*y+x])  chiChroma[Width/ChromaPixelWidth*y+x]--;
   }
-  for (ChannelNo=0 ; ChannelNo<MaxChannelCount-1 ; ChannelNo++)  if (GchiuChromas[ChannelNo])  std::free(GchiuChromas[ChannelNo]);
-  if (GchiuLuma)  std::free(GchiuLuma);
-  if (InpaintData->StaticMaskData)
-  {
-    if (GchiChroma)  std::free(GchiChroma);
-    if (chiChroma)  std::free(chiChroma);
-    if (GchiLuma)  std::free(GchiLuma);
-    if (chiLuma)  std::free(chiLuma);
-  }
-  else
-  {
-    InpaintPrepareMask(&MaskData,nullptr,InpaintData);
-  }
+  if (!InpaintData->StaticMaskData)  InpaintPrepareMask(&MaskData,nullptr,InpaintData);
   if (ErrorText)
   {
     if (Frame)  avs_release_video_frame(Frame);
