@@ -194,13 +194,19 @@ struct DeblendDataStruct
 {
   int  PixelType, Width, Height, Stride[MaxChannelCount], PixelWidth[MaxChannelCount], PixelHeight[MaxChannelCount];
   /* Static logo */
-  DoubleByte * StaticLogoDataChannels[MaxChannelCount];
-  BYTE * StaticAlphaDataChannels[MaxChannelCount];
+  std::array<std::vector<DoubleByte>, MaxChannelCount>  StaticLogoDataChannels;
+  std::array<std::vector<BYTE>, MaxChannelCount>         StaticAlphaDataChannels;
   /* Dynamic logo */
   AVS_Clip * LogoClip, * AlphaClip;
   int  LogoPixelType, AlphaPixelType, LogoFrameCount, AlphaFrameCount, LogoStride[MaxChannelCount], AlphaStride;
   bool  FlipAlpha;
   /* Is static? Check (LogoClip)     Separate alpha clip? Check (AlphaClip) */
+  DeblendDataStruct() :
+    PixelType(0), Width(0), Height(0), Stride{}, PixelWidth{}, PixelHeight{},
+    LogoClip(nullptr), AlphaClip(nullptr),
+    LogoPixelType(0), AlphaPixelType(0), LogoFrameCount(0), AlphaFrameCount(0), LogoStride{}, AlphaStride(0),
+    FlipAlpha(false)
+  {}
 };
 
 
@@ -935,30 +941,18 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   DeblendData = nullptr;
   if (!ErrorText)
   {
-    DeblendData = static_cast<DeblendDataStruct*>(std::malloc(sizeof(DeblendDataStruct)));
+    DeblendData = new (std::nothrow) DeblendDataStruct;
     if (DeblendData)
     {
       DeblendData->PixelType = SrcVideoInfo->pixel_type;
       DeblendData->Width = SrcVideoInfo->width;
       DeblendData->Height = SrcVideoInfo->height;
-      DeblendData->LogoClip = nullptr;
-      DeblendData->AlphaClip = nullptr;
       DeblendData->LogoPixelType = LogoVideoInfo->pixel_type;
       DeblendData->AlphaPixelType = AlphaVideoInfo?AlphaVideoInfo->pixel_type:0;
       DeblendData->LogoFrameCount = LogoVideoInfo->num_frames;
       DeblendData->AlphaFrameCount = AlphaVideoInfo?AlphaVideoInfo->num_frames:0;
-      DeblendData->AlphaStride = 0;
       // only packed RGB is upside down, planar is not.
       DeblendData->FlipAlpha = AlphaVideoInfo ? ((avs_is_rgb(LogoVideoInfo) && !avs_is_planar(LogoVideoInfo)) != (avs_is_rgb(AlphaVideoInfo) && !avs_is_planar(AlphaVideoInfo))) : false;
-      for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)
-      {
-        DeblendData->Stride[ChannelNo] = 0;
-        DeblendData->PixelWidth[ChannelNo] = 0;
-        DeblendData->PixelHeight[ChannelNo] = 0;
-        DeblendData->StaticLogoDataChannels[ChannelNo] = nullptr;
-        DeblendData->StaticAlphaDataChannels[ChannelNo] = nullptr;
-        DeblendData->LogoStride[ChannelNo] = 0;
-      }
       GetFramePointers(nullptr,nullptr,nullptr,nullptr,DeblendData->Stride,DeblendData->PixelWidth,DeblendData->PixelHeight,SrcVideoInfo->pixel_type);
     }
     else  ErrorText = "Deblend: Could not allocate memory";
@@ -982,23 +976,27 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       /* How many channels need to be processed (should be 3, or 4 if alpha channels is part of the logo) */
       ChannelCount = GetFramePointers(LogoFrame,nullptr,nullptr,nullptr,nullptr,LogoPixelWidth,LogoPixelHeight,LogoVideoInfo->pixel_type)-(!AlphaClip);
       /* Memory for static logo data is allocated */
-      for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
+      try
       {
-        DeblendData->StaticLogoDataChannels[ChannelNo] = static_cast<DoubleByte*>(std::malloc(sizeof(DoubleByte)*LogoVideoInfo->width*LogoVideoInfo->height/LogoPixelWidth[ChannelNo]/LogoPixelHeight[ChannelNo]));
-        if (!DeblendData->StaticLogoDataChannels[ChannelNo])  ErrorText = "Deblend: Could not allocate memory";
+        for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
+          DeblendData->StaticLogoDataChannels[ChannelNo].resize(LogoVideoInfo->width*LogoVideoInfo->height/LogoPixelWidth[ChannelNo]/LogoPixelHeight[ChannelNo]);
+        DeblendData->StaticAlphaDataChannels[0].resize(LogoVideoInfo->width*LogoVideoInfo->height);
+        if (avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo))
+          DeblendData->StaticAlphaDataChannels[1].resize(LogoVideoInfo->width*LogoVideoInfo->height);
       }
-      DeblendData->StaticAlphaDataChannels[0] = static_cast<BYTE*>(std::malloc(sizeof(DoubleByte)*LogoVideoInfo->width*LogoVideoInfo->height));
-      if (!DeblendData->StaticAlphaDataChannels[0])  ErrorText = "Deblend: Could not allocate memory";
-      if (avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo))
-      {
-        DeblendData->StaticAlphaDataChannels[1] = static_cast<BYTE*>(std::malloc(sizeof(DoubleByte)*LogoVideoInfo->width*LogoVideoInfo->height));
-        if (!DeblendData->StaticAlphaDataChannels[1])  ErrorText = "Deblend: Could not allocate memory";
-      }
+      catch (std::bad_alloc&)  { ErrorText = "Deblend: Could not allocate memory"; }
     }
     if (!ErrorText)
     {
       /* Core function for static logos is called */
-      if (0>DeblendStaticPrepare(DeblendData->StaticLogoDataChannels,DeblendData->StaticAlphaDataChannels,LogoFrame,AlphaFrame,LogoVideoInfo,AlphaVideoInfo))  ErrorText = "Deblend: Could not gather frame data pointers";
+      DoubleByte * logoPtrs[MaxChannelCount] = {};
+      BYTE * alphaPtrs[MaxChannelCount] = {};
+      for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)
+      {
+        logoPtrs[ChannelNo] = DeblendData->StaticLogoDataChannels[ChannelNo].empty() ? nullptr : DeblendData->StaticLogoDataChannels[ChannelNo].data();
+        alphaPtrs[ChannelNo] = DeblendData->StaticAlphaDataChannels[ChannelNo].empty() ? nullptr : DeblendData->StaticAlphaDataChannels[ChannelNo].data();
+      }
+      if (0>DeblendStaticPrepare(logoPtrs,alphaPtrs,LogoFrame,AlphaFrame,LogoVideoInfo,AlphaVideoInfo))  ErrorText = "Deblend: Could not gather frame data pointers";
     }
     if (AlphaFrame)  avs_release_video_frame(AlphaFrame);
     if (LogoFrame)  avs_release_video_frame(LogoFrame);
@@ -1042,15 +1040,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   /* Release target clip */
   if (DestClip)  avs_release_clip(DestClip);
   if (!ErrorText)  return  DestClipValue;
-  if (DeblendData)
-  {
-    for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)
-    {
-      if (DeblendData->StaticAlphaDataChannels[ChannelNo])  std::free(DeblendData->StaticAlphaDataChannels[ChannelNo]);
-      if (DeblendData->StaticLogoDataChannels[ChannelNo])  std::free(DeblendData->StaticLogoDataChannels[ChannelNo]);
-    }
-    std::free(DeblendData);
-  }
+  if (DeblendData)  delete DeblendData;
   if (AlphaClip)  avs_release_clip(AlphaClip);
   if (LogoClip)  avs_release_clip(LogoClip);
   return  avs_new_value_error(ErrorText);
@@ -1086,9 +1076,9 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
   AlphaData = nullptr;
   for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)
   {
-    if (!DeblendData->StaticLogoDataChannels[ChannelNo])  break;
-    if (DeblendData->StaticAlphaDataChannels[ChannelNo])  AlphaData = DeblendData->StaticAlphaDataChannels[ChannelNo];
-    DeblendStatic(FrameData[ChannelNo],DeblendData->StaticLogoDataChannels[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameStride[ChannelNo],Width/FramePixelWidth[ChannelNo],Height/FramePixelHeight[ChannelNo]);
+    if (DeblendData->StaticLogoDataChannels[ChannelNo].empty())  break;
+    if (!DeblendData->StaticAlphaDataChannels[ChannelNo].empty())  AlphaData = DeblendData->StaticAlphaDataChannels[ChannelNo].data();
+    DeblendStatic(FrameData[ChannelNo],DeblendData->StaticLogoDataChannels[ChannelNo].data(),AlphaData,FramePitch[ChannelNo],FrameStride[ChannelNo],Width/FramePixelWidth[ChannelNo],Height/FramePixelHeight[ChannelNo]);
   }
   return  Frame;
 }
@@ -1195,11 +1185,9 @@ void  AVSC_CC  Deblend_Free(AVS_FilterInfo *  FilterInfo)
   if (FilterInfo->user_data)
   {
     DeblendData = static_cast<DeblendDataStruct*>(FilterInfo->user_data);
-    for (int ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)  if (DeblendData->StaticAlphaDataChannels[ChannelNo])  std::free(DeblendData->StaticAlphaDataChannels[ChannelNo]);
-    for (int ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)  if (DeblendData->StaticLogoDataChannels[ChannelNo])  std::free(DeblendData->StaticLogoDataChannels[ChannelNo]);
     if (DeblendData->AlphaClip)  avs_release_clip(DeblendData->AlphaClip);
     if (DeblendData->LogoClip)  avs_release_clip(DeblendData->LogoClip);
-    std::free(DeblendData);
+    delete DeblendData;
   }
 }
 
