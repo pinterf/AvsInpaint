@@ -285,12 +285,12 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   MaskVideoInfo = MaskClip?avs_get_video_info(MaskClip):nullptr;
   if (MaskClip && !MaskVideoInfo)  ErrorText = "InpaintLogo: Could not load mask clip";
   /* Check all video properties */
-  if (!(ErrorText || avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_yv16(VideoInfo) || avs_is_yv24(VideoInfo) || avs_is_y8(VideoInfo) || avs_is_rgb32(VideoInfo) || avs_is_rgb24(VideoInfo)))  ErrorText = "InpaintLogo: Color space unknown (RGB24, RGB32, YUY2, YV12/16/24/8 allowed only)";
+  if (!(ErrorText || avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_yv16(VideoInfo) || avs_is_yv24(VideoInfo) || avs_is_y8(VideoInfo) || avs_is_rgb32(VideoInfo) || avs_is_rgb24(VideoInfo) || avs_is_planar_rgb(VideoInfo) || avs_is_planar_rgba(VideoInfo)))  ErrorText = "InpaintLogo: Color space unknown (RGB24, RGB32, RGBP, RGBAP, YUY2, YV12/16/24/8 allowed only)";
   if (!(ErrorText || (avs_has_video(VideoInfo) && VideoInfo->num_frames && VideoInfo->width && VideoInfo->height)))  ErrorText = "InpaintLogo: Source clip has no video";
-  if (!ErrorText && MaskClip && !(avs_is_yuy2(MaskVideoInfo) || avs_is_yv12(MaskVideoInfo) || avs_is_yv16(MaskVideoInfo) || avs_is_yv24(MaskVideoInfo) || avs_is_y8(MaskVideoInfo) || avs_is_rgb32(MaskVideoInfo)))  ErrorText = "InpaintLogo: Mask color space must have luma channel (YUY2, YV12/16/24, Y8) or alpha channel (RGB32)";
+  if (!ErrorText && MaskClip && !(avs_is_yuy2(MaskVideoInfo) || avs_is_yv12(MaskVideoInfo) || avs_is_yv16(MaskVideoInfo) || avs_is_yv24(MaskVideoInfo) || avs_is_y8(MaskVideoInfo) || avs_is_rgb32(MaskVideoInfo) || avs_is_planar_rgba(MaskVideoInfo)))  ErrorText = "InpaintLogo: Mask color space must have luma channel (YUY2, YV12/16/24, Y8) or alpha channel (RGB32, RGBAP)";
   if (!ErrorText && MaskClip && !(avs_has_video(MaskVideoInfo) && MaskVideoInfo->num_frames && MaskVideoInfo->width && MaskVideoInfo->height))  ErrorText = "InpaintLogo: Mask clip has no video";
   if (!ErrorText && MaskClip && !((VideoInfo->width==MaskVideoInfo->width) && (VideoInfo->height==MaskVideoInfo->height)))  ErrorText = "InpaintLogo: Source and mask clip have different dimensions";
-  if (!(ErrorText || MaskClip || avs_is_rgb32(VideoInfo)))  ErrorText = "InpaintLogo: Mask is missing (needed if source clip is not RGB32)";
+  if (!(ErrorText || MaskClip || avs_is_rgb32(VideoInfo) || avs_is_planar_rgba(VideoInfo)))  ErrorText = "InpaintLogo: Mask is missing (needed if source clip is not RGB32 or RGBAP)";
   if (GetFramePointers(nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,VideoInfo->pixel_type)-(MaskClip?0:1)<=0)  ErrorText = "InpaintLogo internal error: Color space unrecognized";
 
   /* Extract values from AVS_Value container, throw errors if necessary */
@@ -366,8 +366,9 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       InpaintData->MaskFrameCount = 0;
     }
     GetFramePointers(nullptr,nullptr,nullptr,nullptr,Stride,nullptr,nullptr,MaskVideoInfo->pixel_type);
-    InpaintData->MaskChannelNo = avs_is_yuv(MaskVideoInfo)?0:3; // y8 is yuv as well here
-    InpaintData->FlipMask = (avs_is_rgb(VideoInfo)!=avs_is_rgb(MaskVideoInfo));
+    InpaintData->MaskChannelNo = avs_is_yuv(MaskVideoInfo)?0:3; // y8 is yuv as well here; planar RGBA alpha is also channel 3
+    // only packed RGB is upside-down, planar is not
+    InpaintData->FlipMask = ((avs_is_rgb(VideoInfo) && !avs_is_planar(VideoInfo)) != (avs_is_rgb(MaskVideoInfo) && !avs_is_planar(MaskVideoInfo)));
     InpaintData->MaskStride = Stride[InpaintData->MaskChannelNo];
     InpaintData->MaskPixelType = MaskVideoInfo->pixel_type;
     InpaintData->MaxSteps = (Steps>=0)?Steps:-1;
@@ -939,13 +940,13 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   /* Check if all color spaces and dimensions and so on are correct */
   ErrorText = nullptr;
   if (!(avs_has_video(SrcVideoInfo) && SrcVideoInfo->num_frames && SrcVideoInfo->width && SrcVideoInfo->height))  ErrorText = "Deblend: Source clip has no video";
-  if (!(ErrorText || avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo)))  ErrorText = "Deblend: Color space unknown (RGB24, RGB32, YUY2, YV12/16/24/8 allowed only)";
+  if (!(ErrorText || avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo) || avs_is_planar_rgb(SrcVideoInfo) || avs_is_planar_rgba(SrcVideoInfo)))  ErrorText = "Deblend: Color space unknown (RGB24, RGB32, RGBP, RGBAP, YUY2, YV12/16/24/8 allowed only)";
   if (!(ErrorText || avs_is_same_colorspace(SrcVideoInfo,LogoVideoInfo) || (avs_is_rgb(SrcVideoInfo) && avs_is_rgb(LogoVideoInfo))))  ErrorText = "Deblend: Source clip and logo clip must have same color spaces (combinations of RGB / RGBA are allowed)";
   if (!(ErrorText || (avs_has_video(LogoVideoInfo) && LogoVideoInfo->num_frames && LogoVideoInfo->width && LogoVideoInfo->height)))  ErrorText = "Deblend: Logo clip has no video";
   if (!(ErrorText || ((SrcVideoInfo->width==LogoVideoInfo->width) && (SrcVideoInfo->height==LogoVideoInfo->height))))  ErrorText = "Deblend: Source clip and logo clip have different dimensions";
-  if (!(ErrorText || AlphaClip || avs_is_rgb32(LogoVideoInfo)))  ErrorText = "Deblend: Alpha clip is missing (needed if logo clip is not RGB32)";
+  if (!(ErrorText || AlphaClip || avs_is_rgb32(LogoVideoInfo) || avs_is_planar_rgba(LogoVideoInfo)))  ErrorText = "Deblend: Alpha clip is missing (needed if logo clip is not RGB32 or RGBAP)";
   if (!(ErrorText || !AlphaClip || (avs_has_video(AlphaVideoInfo) && AlphaVideoInfo->num_frames)))  ErrorText = "Deblend: Alpha clip has no video";
-  if (!(ErrorText || !AlphaClip || avs_is_yuy2(AlphaVideoInfo) || avs_is_yv12(AlphaVideoInfo) || avs_is_yv16(AlphaVideoInfo) || avs_is_yv24(AlphaVideoInfo) || avs_is_y8(AlphaVideoInfo) || avs_is_rgb32(AlphaVideoInfo)))  ErrorText = "Deblend: Alpha color space must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGBA)";
+  if (!(ErrorText || !AlphaClip || avs_is_yuy2(AlphaVideoInfo) || avs_is_yv12(AlphaVideoInfo) || avs_is_yv16(AlphaVideoInfo) || avs_is_yv24(AlphaVideoInfo) || avs_is_y8(AlphaVideoInfo) || avs_is_rgb32(AlphaVideoInfo) || avs_is_planar_rgba(AlphaVideoInfo)))  ErrorText = "Deblend: Alpha color space must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGBA, RGBAP)";
   if (!(ErrorText || !AlphaClip || ((AlphaVideoInfo->width==SrcVideoInfo->width) && (AlphaVideoInfo->height==SrcVideoInfo->height))))  ErrorText = "Deblend: Source clip and alpha clip have different dimensions";
   /* Everything seems to be fine */
   /* Data structure is allocated */
@@ -965,7 +966,8 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       DeblendData->LogoFrameCount = LogoVideoInfo->num_frames;
       DeblendData->AlphaFrameCount = AlphaVideoInfo?AlphaVideoInfo->num_frames:0;
       DeblendData->AlphaStride = 0;
-      DeblendData->FlipAlpha = AlphaVideoInfo ? ((!avs_is_rgb(LogoVideoInfo) ^ !avs_is_rgb32(AlphaVideoInfo)) != 0) : false;
+      // only packed RGB is upside down, planar is not.
+      DeblendData->FlipAlpha = AlphaVideoInfo ? ((avs_is_rgb(LogoVideoInfo) && !avs_is_planar(LogoVideoInfo)) != (avs_is_rgb(AlphaVideoInfo) && !avs_is_planar(AlphaVideoInfo))) : false;
       for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)
       {
         DeblendData->Stride[ChannelNo] = 0;
@@ -1268,12 +1270,12 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   SrcVideoInfo = avs_get_video_info(SrcClip);
   MaskVideoInfo = MaskGiven?avs_get_video_info(MaskClip):nullptr;
   if (!(avs_has_video(SrcVideoInfo) && SrcVideoInfo->num_frames))  ErrorText = "Analyze: Source clip has no video";
-  if (!(ErrorText || avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo)))  ErrorText = "Analyze: Color space unknown (RGB24, RGB32, YUY2, YV12/16/24/8 allowed only)";
+  if (!(ErrorText || avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo) || avs_is_planar_rgb(SrcVideoInfo) || avs_is_planar_rgba(SrcVideoInfo)))  ErrorText = "Analyze: Color space unknown (RGB24, RGB32, RGBP, RGBAP, YUY2, YV12/16/24/8 allowed only)";
   if (!ErrorText && ((SrcVideoInfo->width==0) || (SrcVideoInfo->height==0) || (SrcVideoInfo->width==1 && SrcVideoInfo->height==1)))  ErrorText = "Analyze: Source clip too small";
   if (!ErrorText && ComputeAlpha && (SrcVideoInfo->num_frames<2))  ErrorText = "Analyze: Source clip must have at least two frames for alpha computation";
-  if (!(ErrorText || MaskClip || avs_is_rgb32(SrcVideoInfo)))  ErrorText = "Analyze: Mask is missing (needed if source clip is not RGB32)";
+  if (!(ErrorText || MaskClip || avs_is_rgb32(SrcVideoInfo) || avs_is_planar_rgba(SrcVideoInfo)))  ErrorText = "Analyze: Mask is missing (needed if source clip is not RGB32 or RGBAP)";
   if (!ErrorText && MaskClip && !(avs_has_video(MaskVideoInfo) && MaskVideoInfo->num_frames))  ErrorText = "Analyze: Mask clip has no video";
-  if (!ErrorText && MaskClip && !avs_is_yuy2(MaskVideoInfo) && !avs_is_yv12(MaskVideoInfo) && !avs_is_yv16(MaskVideoInfo) && !avs_is_yv24(MaskVideoInfo) && !avs_is_y8(MaskVideoInfo) && !avs_is_rgb32(MaskVideoInfo))  ErrorText = "Analyze: Mask color space must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGB32)";
+  if (!ErrorText && MaskClip && !avs_is_yuy2(MaskVideoInfo) && !avs_is_yv12(MaskVideoInfo) && !avs_is_yv16(MaskVideoInfo) && !avs_is_yv24(MaskVideoInfo) && !avs_is_y8(MaskVideoInfo) && !avs_is_rgb32(MaskVideoInfo) && !avs_is_planar_rgba(MaskVideoInfo))  ErrorText = "Analyze: Mask color space must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGB32, RGBAP)";
   if (!ErrorText && MaskClip && !(MaskVideoInfo->width==SrcVideoInfo->width && MaskVideoInfo->height==SrcVideoInfo->height))  ErrorText = "Analyze: Source clip and mask clip have different dimensions";
   /* Done! All arguments seem to be correct */
   /* As this filter is already done when the script is loaded, we try to deactivate all cache systems - Is this smart ? */
@@ -1294,6 +1296,12 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       MaskPitch = avs_get_pitch_p(MaskFrame,AVS_PLANAR_Y);
       MaskStride = avs_is_yuy2(MaskVideoInfo)?2:1;
     }
+    else if (MaskClip && avs_is_planar_rgba(MaskVideoInfo))
+    {
+      MaskData = avs_get_read_ptr_p(MaskFrame,AVS_PLANAR_A);
+      MaskPitch = avs_get_pitch_p(MaskFrame,AVS_PLANAR_A);
+      MaskStride = 1;
+    }
     else
     {
       MaskData = avs_get_read_ptr_p(MaskFrame, AVS_DEFAULT_PLANE)+3;
@@ -1304,8 +1312,8 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   }
   if (!ErrorText)
   {
-    /* If one color space is YUV, the other RGB, we flip the mask so it fits the source */
-    if (MaskClip && ((!avs_is_yuv(SrcVideoInfo)) != (!avs_is_yuv(MaskVideoInfo))))
+    /* If source and mask have different vertical orientations (packed BGR is bottom-up, everything else top-down), flip the mask */
+    if (MaskClip && ((avs_is_rgb(SrcVideoInfo) && !avs_is_planar(SrcVideoInfo)) != (avs_is_rgb(MaskVideoInfo) && !avs_is_planar(MaskVideoInfo))))
     {
       MaskData += (SrcVideoInfo->height-1)*MaskPitch;
       MaskPitch *= -1;
@@ -1631,6 +1639,12 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
     case AVS_CS_Y8:
       if (ChannelCount > 1)  ChannelCount = 1;
       break;
+    case AVS_CS_RGBP:
+      if (ChannelCount>3)  ChannelCount = 3;
+    break;
+    case AVS_CS_RGBAP:
+      if (ChannelCount>4)  ChannelCount = 4;
+    break;
     default:
       return  0;
     break;
@@ -1654,6 +1668,8 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
       case AVS_CS_YV16:
       case AVS_CS_YV24:
       case AVS_CS_Y8:
+      case AVS_CS_RGBP:
+      case AVS_CS_RGBAP:
         for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Stride[ChannelNo] = 1;
       break;
     }
@@ -1677,6 +1693,13 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
         if (ChannelCount>1)  Pitch[1] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_U);
         if (ChannelCount>2)  Pitch[2] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_V);
       break;
+      case AVS_CS_RGBP:
+      case AVS_CS_RGBAP:
+        Pitch[0] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_B);
+        if (ChannelCount>1)  Pitch[1] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_G);
+        if (ChannelCount>2)  Pitch[2] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_R);
+        if (ChannelCount>3)  Pitch[3] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_A);
+      break;
     }
   }
   if (PixelWidth)
@@ -1687,6 +1710,8 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
       case AVS_CS_BGR32:
       case AVS_CS_YV24:
       case AVS_CS_Y8:
+      case AVS_CS_RGBP:
+      case AVS_CS_RGBAP:
         for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelWidth[ChannelNo] = 1;
       break;
       case AVS_CS_YUY2:
@@ -1708,6 +1733,8 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
       case AVS_CS_YV24:
       case AVS_CS_YV16:
       case AVS_CS_Y8:
+      case AVS_CS_RGBP:
+      case AVS_CS_RGBAP:
         for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelHeight[ChannelNo] = 1;
       break;
       case AVS_CS_YV12:
@@ -1740,6 +1767,14 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
         if (ChannelCount>2)  ReadPtrs[2] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_V);
         for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (!ReadPtrs[ChannelNo])  return 0;
       break;
+      case AVS_CS_RGBP:
+      case AVS_CS_RGBAP:
+        ReadPtrs[0] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_B);
+        if (ChannelCount>1)  ReadPtrs[1] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_G);
+        if (ChannelCount>2)  ReadPtrs[2] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_R);
+        if (ChannelCount>3)  ReadPtrs[3] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_A);
+        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (!ReadPtrs[ChannelNo])  return 0;
+      break;
     }
   }
   if (WritePtrs)
@@ -1763,6 +1798,14 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
         WritePtrs[0] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_Y);
         if (ChannelCount>1)  WritePtrs[1] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_U);
         if (ChannelCount>2)  WritePtrs[2] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_V);
+        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (!WritePtrs[ChannelNo])  return 0;
+      break;
+      case AVS_CS_RGBP:
+      case AVS_CS_RGBAP:
+        WritePtrs[0] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_B);
+        if (ChannelCount>1)  WritePtrs[1] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_G);
+        if (ChannelCount>2)  WritePtrs[2] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_R);
+        if (ChannelCount>3)  WritePtrs[3] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_A);
         for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (!WritePtrs[ChannelNo])  return 0;
       break;
     }
