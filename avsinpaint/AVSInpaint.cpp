@@ -215,7 +215,7 @@ void  AVSC_CC  DistanceFunction_Free(AVS_FilterInfo *  FilterInfo);
 /* Common functions */
 int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const BYTE **  ReadPtrs,  int *  Pitch,  int *  Stride,  int *  PixelWidth,  int *  PixelHeight,  int  PixelType);
 bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight);
-bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap);
+bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<int> &  HeapVec);
 /* Inpaint tools */
 InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  InpaintDataStruct *  InpaintData);
 void  AddPreBlurValue(float  G[],  int  x,  int  y,  int  Width,  int  Height,  double  Value,  double  BlurXKernel[],  int  BlurXKernelSize,  double  BlurYKernel[],  int  BlurYKernelYize);
@@ -1817,26 +1817,21 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const 
 
 bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight)
 {
-  int * Close;  /* Position in Heap array, or 0, if not "close" */
   int  k, x, y, h;
   bool  Error;
   FMMHeapStruct  Heap;
 
   /* Initialize close matrix */
-  Close = static_cast<int*>(std::calloc(Width*Height,sizeof(int)));
-  if (!Close)  return  false;
+  std::vector<int> CloseVec(Width*Height, 0);
+  int * Close = CloseVec.data();
   for (k=0 ; k<Width*Height ; k++)  if (u[k]>(float)0.0)  u[k] = FMMFarMarker;
   /* Initialize heap struct */
   Heap.Delta = FMMHeapDelta;
   Heap.MaxSize = 4*(Width+Height+FMMHeapDelta);  /* Enough memory for slightly unregular domains */
-  Heap.MemPointer = static_cast<int*>(std::malloc(sizeof(int)*Heap.MaxSize));
-  if (!Heap.MemPointer)
-  {
-    std::free(Close);
-    return  false;
-  }
+  std::vector<int> HeapVec(Heap.MaxSize);
+  Heap.MemPointer = HeapVec.data();
   Heap.Size = 0;
-  Heap.Heap = Heap.MemPointer-1;
+  Heap.Heap = Heap.MemPointer-1;  /* 1-indexed heap: Heap[1] is root (= MemPointer[0]); Heap[0] is never accessed */
   /* Initialize close region (around initial values) */
   Error = false;
   for (k=0 ; k<Width*Height ; k++)
@@ -1845,10 +1840,10 @@ bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height
     {
       y = k/Width;
       x = k%Width;
-      if (x>0)  Error |= !FMMUpdateCloseValue(u,Close,x-1,y,Width,Height,PixelWidth,PixelHeight,&Heap);
-      if (y>0)  Error |= !FMMUpdateCloseValue(u,Close,x,y-1,Width,Height,PixelWidth,PixelHeight,&Heap);
-      if (x<Width-1)  Error |= !FMMUpdateCloseValue(u,Close,x+1,y,Width,Height,PixelWidth,PixelHeight,&Heap);
-      if (y<Height-1)  Error |= !FMMUpdateCloseValue(u,Close,x,y+1,Width,Height,PixelWidth,PixelHeight,&Heap);
+      if (x>0)  Error |= !FMMUpdateCloseValue(u,Close,x-1,y,Width,Height,PixelWidth,PixelHeight,&Heap,HeapVec);
+      if (y>0)  Error |= !FMMUpdateCloseValue(u,Close,x,y-1,Width,Height,PixelWidth,PixelHeight,&Heap,HeapVec);
+      if (x<Width-1)  Error |= !FMMUpdateCloseValue(u,Close,x+1,y,Width,Height,PixelWidth,PixelHeight,&Heap,HeapVec);
+      if (y<Height-1)  Error |= !FMMUpdateCloseValue(u,Close,x,y+1,Width,Height,PixelWidth,PixelHeight,&Heap,HeapVec);
     }
   }
   /* Main loop */
@@ -1884,19 +1879,17 @@ bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height
     /** Make points around the new alive point close **/
     y = k/Width;
     x = k%Width;
-    if (x>0)  Error |= !FMMUpdateCloseValue(u,Close,x-1,y,Width,Height,PixelWidth,PixelHeight,&Heap);
-    if (y>0)  Error |= !FMMUpdateCloseValue(u,Close,x,y-1,Width,Height,PixelWidth,PixelHeight,&Heap);
-    if (x<Width-1)  Error |= !FMMUpdateCloseValue(u,Close,x+1,y,Width,Height,PixelWidth,PixelHeight,&Heap);
-    if (y<Height-1)  Error |= !FMMUpdateCloseValue(u,Close,x,y+1,Width,Height,PixelWidth,PixelHeight,&Heap);
+    if (x>0)  Error |= !FMMUpdateCloseValue(u,Close,x-1,y,Width,Height,PixelWidth,PixelHeight,&Heap,HeapVec);
+    if (y>0)  Error |= !FMMUpdateCloseValue(u,Close,x,y-1,Width,Height,PixelWidth,PixelHeight,&Heap,HeapVec);
+    if (x<Width-1)  Error |= !FMMUpdateCloseValue(u,Close,x+1,y,Width,Height,PixelWidth,PixelHeight,&Heap,HeapVec);
+    if (y<Height-1)  Error |= !FMMUpdateCloseValue(u,Close,x,y+1,Width,Height,PixelWidth,PixelHeight,&Heap,HeapVec);
   }
-  std::free(Heap.MemPointer);
-  std::free(Close);
   return  !Error;
 }
 
 
 
-bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap)
+bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<int> &  HeapVec)
 {
   int  k, h;  /* k = Position in matrix,   h = position in heap */
   int  xm, xp, ym, yp;
@@ -1943,10 +1936,9 @@ bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Wid
     {
       /* Increase heap memory */
       Heap->MaxSize += Heap->Delta;
-      Heap->Heap = static_cast<int*>(std::realloc(Heap->MemPointer,sizeof(int)*Heap->MaxSize));
-      if (!Heap->Heap)  return  false;
-      Heap->MemPointer = Heap->Heap;
-      Heap->Heap--;
+      try  { HeapVec.resize(Heap->MaxSize); }  catch (std::bad_alloc&)  { return  false; }
+      Heap->MemPointer = HeapVec.data();
+      Heap->Heap = Heap->MemPointer-1;
     }
     h = Heap->Size;
   }
