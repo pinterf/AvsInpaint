@@ -135,12 +135,12 @@ struct InpaintDataStruct
   double * Luma4LumaPostBlurXKernel, * Luma4LumaPostBlurYKernel;  /* Postblurring will also convert between different samplings */
   double * Chroma4ChromaPostBlurXKernel, * Chroma4ChromaPostBlurYKernel;
   double * Luma4ChromaPostBlurXKernel, * Luma4ChromaPostBlurYKernel;  /* If ChromaPixelW/H is even, this points to (the weight of) the pixel *before* the center line */
-  double ** Chroma4LumaPostBlurXKernels, ** Chroma4LumaPostBlurYKernels;
-  double * LumaPreBlurXKernelVector, * LumaPreBlurYKernelVector, * ChromaPreBlurXKernelVector, * ChromaPreBlurYKernelVector;
-  double * Luma4LumaPostBlurXKernelVector, * Luma4LumaPostBlurYKernelVector;
-  double * Chroma4ChromaPostBlurXKernelVector, * Chroma4ChromaPostBlurYKernelVector;
-  double * Luma4ChromaPostBlurXKernelVector, * Luma4ChromaPostBlurYKernelVector;
-  double ** Chroma4LumaPostBlurXKernelVectors, ** Chroma4LumaPostBlurYKernelVectors;  /* Blurring Chroma to transport luma -> Different kernels for each luma pixel (inside one chroma pixel) */
+  std::vector<double*> Chroma4LumaPostBlurXKernels, Chroma4LumaPostBlurYKernels;  /* center pointers into KernelVectors below */
+  std::vector<double> LumaPreBlurXKernelVector, LumaPreBlurYKernelVector, ChromaPreBlurXKernelVector, ChromaPreBlurYKernelVector;
+  std::vector<double> Luma4LumaPostBlurXKernelVector, Luma4LumaPostBlurYKernelVector;
+  std::vector<double> Chroma4ChromaPostBlurXKernelVector, Chroma4ChromaPostBlurYKernelVector;
+  std::vector<double> Luma4ChromaPostBlurXKernelVector, Luma4ChromaPostBlurYKernelVector;
+  std::vector<std::vector<double>> Chroma4LumaPostBlurXKernelVectors, Chroma4LumaPostBlurYKernelVectors;  /* Blurring Chroma to transport luma -> Different kernels for each luma pixel (inside one chroma pixel) */
   int  LumaPreBlurXKernelSize, LumaPreBlurYKernelSize, ChromaPreBlurXKernelSize, ChromaPreBlurYKernelSize;
   int  Luma4LumaPostBlurXKernelSize, Luma4LumaPostBlurYKernelSize;
   int  Chroma4ChromaPostBlurXKernelSize, Chroma4ChromaPostBlurYKernelSize;
@@ -148,6 +148,29 @@ struct InpaintDataStruct
   int  Chroma4LumaPostBlurXKernelSize, Chroma4LumaPostBlurYKernelSize;
   /* For static mask */
   InpaintMaskDataStruct * StaticMaskData;  /* nullptr means dynamic mask */
+
+  InpaintDataStruct() :
+    MaskClip(nullptr), MaskFrameCount(0), MaxSteps(0),
+    PixelWidth(0.0), PixelHeight(0.0),
+    LumaWeight(0.0), ChromaWeight(0.0),
+    LumaRadiusX(0.0), LumaRadiusY(0.0), ChromaRadiusX(0.0), ChromaRadiusY(0.0), Sharpness(0.0),
+    ChromaTensor(false),
+    PixelType(0), Width(0), Height(0), ChromaPixelWidth(0), ChromaPixelHeight(0),
+    LumaStride(0), ChromaStride(0), ChromaChannelCount(0), MaskPixelType(0), MaskStride(0), MaskChannelNo(0),
+    FlipMask(false),
+    LumaPreBlurXKernel(nullptr), LumaPreBlurYKernel(nullptr),
+    ChromaPreBlurXKernel(nullptr), ChromaPreBlurYKernel(nullptr),
+    Luma4LumaPostBlurXKernel(nullptr), Luma4LumaPostBlurYKernel(nullptr),
+    Chroma4ChromaPostBlurXKernel(nullptr), Chroma4ChromaPostBlurYKernel(nullptr),
+    Luma4ChromaPostBlurXKernel(nullptr), Luma4ChromaPostBlurYKernel(nullptr),
+    LumaPreBlurXKernelSize(0), LumaPreBlurYKernelSize(0),
+    ChromaPreBlurXKernelSize(0), ChromaPreBlurYKernelSize(0),
+    Luma4LumaPostBlurXKernelSize(0), Luma4LumaPostBlurYKernelSize(0),
+    Chroma4ChromaPostBlurXKernelSize(0), Chroma4ChromaPostBlurYKernelSize(0),
+    Luma4ChromaPostBlurXKernelSize(0), Luma4ChromaPostBlurYKernelSize(0),
+    Chroma4LumaPostBlurXKernelSize(0), Chroma4LumaPostBlurYKernelSize(0),
+    StaticMaskData(nullptr)
+  {}
 };
 
 
@@ -330,7 +353,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   if (!ErrorText)
   {
     /* Allocate data struct */
-    InpaintData = static_cast<InpaintDataStruct*>(std::malloc(sizeof(InpaintDataStruct)));
+    InpaintData = new (std::nothrow) InpaintDataStruct();
     if (!InpaintData)  ErrorText = "InpaintLogo: Could not allocate memory";
   }
   if (InpaintData)
@@ -394,22 +417,6 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     InpaintData->LumaRadiusY = std::max<double>(Radius/InpaintData->PixelHeight,InpaintMinRadiusXY);
     InpaintData->Sharpness = Sharpness;
     InpaintData->ChromaTensor = ChromaTensor && InpaintData->ChromaChannelCount && avs_is_yuv(VideoInfo);
-    /** Initialize all blur kernel stuff **/
-    InpaintData->LumaPreBlurXKernel = InpaintData->LumaPreBlurYKernel = InpaintData->ChromaPreBlurXKernel = InpaintData->ChromaPreBlurYKernel = nullptr;
-    InpaintData->Luma4LumaPostBlurXKernel = InpaintData->Luma4LumaPostBlurYKernel = nullptr;
-    InpaintData->Chroma4ChromaPostBlurXKernel = InpaintData->Chroma4ChromaPostBlurYKernel = nullptr;
-    InpaintData->Luma4ChromaPostBlurXKernel = InpaintData->Luma4ChromaPostBlurYKernel = nullptr;
-    InpaintData->Chroma4LumaPostBlurXKernels = InpaintData->Chroma4LumaPostBlurYKernels = nullptr;
-    InpaintData->LumaPreBlurXKernelVector = InpaintData->LumaPreBlurYKernelVector = InpaintData->ChromaPreBlurXKernelVector = InpaintData->ChromaPreBlurYKernelVector = nullptr;
-    InpaintData->Luma4LumaPostBlurXKernelVector = InpaintData->Luma4LumaPostBlurYKernelVector = nullptr;
-    InpaintData->Chroma4ChromaPostBlurXKernelVector = InpaintData->Chroma4ChromaPostBlurYKernelVector = nullptr;
-    InpaintData->Luma4ChromaPostBlurXKernelVector = InpaintData->Luma4ChromaPostBlurYKernelVector = nullptr;
-    InpaintData->Chroma4LumaPostBlurXKernelVectors = InpaintData->Chroma4LumaPostBlurYKernelVectors = nullptr;
-    InpaintData->LumaPreBlurXKernelSize = InpaintData->LumaPreBlurYKernelSize = InpaintData->ChromaPreBlurXKernelSize = InpaintData->ChromaPreBlurYKernelSize = 0;
-    InpaintData->Luma4LumaPostBlurXKernelSize = InpaintData->Luma4LumaPostBlurYKernelSize = 0;
-    InpaintData->Chroma4ChromaPostBlurXKernelSize = InpaintData->Chroma4ChromaPostBlurYKernelSize = 0;
-    InpaintData->Luma4ChromaPostBlurXKernelSize = InpaintData->Luma4ChromaPostBlurYKernelSize = 0;
-    InpaintData->Chroma4LumaPostBlurXKernelSize = InpaintData->Chroma4LumaPostBlurYKernelSize = 0;
     /** Set blurring kernel sizes and allocate a lot of memory **/
     if (InpaintData->LumaWeight!=0.0)
     {
@@ -417,63 +424,64 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       InpaintData->LumaPreBlurYKernelSize = static_cast<int>(std::max<double>(std::floor(PreBlurSize/InpaintData->PixelHeight),InpaintMinPreBlurXYKernelSize));
       InpaintData->Luma4LumaPostBlurXKernelSize = static_cast<int>(std::max<double>(std::floor(PostBlurSize/InpaintData->PixelWidth+0.5),InpaintMinPostBlurXYKernelSize));
       InpaintData->Luma4LumaPostBlurYKernelSize = static_cast<int>(std::max<double>(std::floor(PostBlurSize/InpaintData->PixelHeight+0.5),InpaintMinPostBlurXYKernelSize));
-      InpaintData->LumaPreBlurXKernelVector = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->LumaPreBlurXKernelSize+1)));
-      InpaintData->LumaPreBlurYKernelVector = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->LumaPreBlurYKernelSize+1)));
-      InpaintData->Luma4LumaPostBlurXKernelVector = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->Luma4LumaPostBlurXKernelSize+1)));
-      InpaintData->Luma4LumaPostBlurYKernelVector = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->Luma4LumaPostBlurYKernelSize+1)));
-      if (!(InpaintData->LumaPreBlurXKernelVector && InpaintData->LumaPreBlurYKernelVector && InpaintData->Luma4LumaPostBlurXKernelVector && InpaintData->Luma4LumaPostBlurYKernelVector))  ErrorText = "InpaintLogo: Could not allocate memory";
+      try
+      {
+        InpaintData->LumaPreBlurXKernelVector.resize(2*InpaintData->LumaPreBlurXKernelSize+1);
+        InpaintData->LumaPreBlurYKernelVector.resize(2*InpaintData->LumaPreBlurYKernelSize+1);
+        InpaintData->Luma4LumaPostBlurXKernelVector.resize(2*InpaintData->Luma4LumaPostBlurXKernelSize+1);
+        InpaintData->Luma4LumaPostBlurYKernelVector.resize(2*InpaintData->Luma4LumaPostBlurYKernelSize+1);
+      }
+      catch (std::bad_alloc&)  { ErrorText = "InpaintLogo: Could not allocate memory"; }
     }
     if (InpaintData->ChromaChannelCount || (InpaintData->ChromaWeight!=0.0))
     {
       InpaintData->ChromaPreBlurXKernelSize = static_cast<int>(std::max<double>(std::floor(PreBlurSize/InpaintData->PixelWidth/InpaintData->ChromaPixelWidth),InpaintMinPreBlurXYKernelSize));
       InpaintData->ChromaPreBlurYKernelSize = static_cast<int>(std::max<double>(std::floor(PreBlurSize/InpaintData->PixelHeight/InpaintData->ChromaPixelHeight),InpaintMinPreBlurXYKernelSize));
-      InpaintData->ChromaPreBlurXKernelVector = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->ChromaPreBlurXKernelSize+1)));
-      InpaintData->ChromaPreBlurYKernelVector = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->ChromaPreBlurYKernelSize+1)));
-      if (!(InpaintData->ChromaPreBlurXKernelVector && InpaintData->ChromaPreBlurYKernelVector))  ErrorText = "InpaintLogo: Could not allocate memory";
+      try
+      {
+        InpaintData->ChromaPreBlurXKernelVector.resize(2*InpaintData->ChromaPreBlurXKernelSize+1);
+        InpaintData->ChromaPreBlurYKernelVector.resize(2*InpaintData->ChromaPreBlurYKernelSize+1);
+      }
+      catch (std::bad_alloc&)  { ErrorText = "InpaintLogo: Could not allocate memory"; }
     }
     if (InpaintData->ChromaTensor || (InpaintData->ChromaWeight!=0.0))
     {
       InpaintData->Chroma4ChromaPostBlurXKernelSize = static_cast<int>(std::max<double>(std::floor(PostBlurSize/InpaintData->PixelWidth/InpaintData->ChromaPixelWidth+0.5),InpaintMinPostBlurXYKernelSize));
       InpaintData->Chroma4ChromaPostBlurYKernelSize = static_cast<int>(std::max<double>(std::floor(PostBlurSize/InpaintData->PixelHeight/InpaintData->ChromaPixelHeight+0.5),InpaintMinPostBlurXYKernelSize));
-      InpaintData->Chroma4ChromaPostBlurXKernelVector = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->Chroma4ChromaPostBlurXKernelSize+1)));
-      InpaintData->Chroma4ChromaPostBlurYKernelVector = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->Chroma4ChromaPostBlurYKernelSize+1)));
-      if (!(InpaintData->Chroma4ChromaPostBlurXKernelVector && InpaintData->Chroma4ChromaPostBlurYKernelVector))  ErrorText = "InpaintLogo: Could not allocate memory";
+      try
+      {
+        InpaintData->Chroma4ChromaPostBlurXKernelVector.resize(2*InpaintData->Chroma4ChromaPostBlurXKernelSize+1);
+        InpaintData->Chroma4ChromaPostBlurYKernelVector.resize(2*InpaintData->Chroma4ChromaPostBlurYKernelSize+1);
+      }
+      catch (std::bad_alloc&)  { ErrorText = "InpaintLogo: Could not allocate memory"; }
     }
     if (InpaintData->ChromaTensor && (InpaintData->LumaWeight!=0.0))
     {
       InpaintData->Luma4ChromaPostBlurXKernelSize = static_cast<int>(std::max<double>(std::floor(PostBlurSize/InpaintData->PixelWidth+((InpaintData->ChromaPixelWidth%2)?0.0:0.5)),InpaintMinPostBlurXYKernelSize));
       InpaintData->Luma4ChromaPostBlurYKernelSize = static_cast<int>(std::max<double>(std::floor(PostBlurSize/InpaintData->PixelHeight+((InpaintData->ChromaPixelHeight%2)?0.0:0.5)),InpaintMinPostBlurXYKernelSize));
-      InpaintData->Luma4ChromaPostBlurXKernelVector = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->Luma4ChromaPostBlurXKernelSize+1)));
-      InpaintData->Luma4ChromaPostBlurYKernelVector = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->Luma4ChromaPostBlurYKernelSize+1)));
-      if (!(InpaintData->Luma4ChromaPostBlurXKernelVector && InpaintData->Luma4ChromaPostBlurYKernelVector))  ErrorText = "InpaintLogo: Could not allocate memory";
+      try
+      {
+        InpaintData->Luma4ChromaPostBlurXKernelVector.resize(2*InpaintData->Luma4ChromaPostBlurXKernelSize+1);
+        InpaintData->Luma4ChromaPostBlurYKernelVector.resize(2*InpaintData->Luma4ChromaPostBlurYKernelSize+1);
+      }
+      catch (std::bad_alloc&)  { ErrorText = "InpaintLogo: Could not allocate memory"; }
     }
     if (InpaintData->ChromaWeight!=0.0)
     {
       InpaintData->Chroma4LumaPostBlurXKernelSize = static_cast<int>(std::max<double>(std::floor(PostBlurSize/InpaintData->PixelWidth/InpaintData->ChromaPixelWidth+0.5-(InpaintData->ChromaPixelWidth%2?0.0:0.5/InpaintData->ChromaPixelWidth)),InpaintMinPostBlurXYKernelSize));
       InpaintData->Chroma4LumaPostBlurYKernelSize = static_cast<int>(std::max<double>(std::floor(PostBlurSize/InpaintData->PixelHeight/InpaintData->ChromaPixelHeight+0.5-(InpaintData->ChromaPixelHeight%2?0.0:0.5/InpaintData->ChromaPixelHeight)),InpaintMinPostBlurXYKernelSize));
-      InpaintData->Chroma4LumaPostBlurXKernelVectors = static_cast<double**>(std::malloc(sizeof(double*)*(InpaintData->ChromaPixelWidth)));
-      InpaintData->Chroma4LumaPostBlurYKernelVectors = static_cast<double**>(std::malloc(sizeof(double*)*(InpaintData->ChromaPixelHeight)));
-      InpaintData->Chroma4LumaPostBlurXKernels = static_cast<double**>(std::malloc(sizeof(double*)*(InpaintData->ChromaPixelWidth)));
-      InpaintData->Chroma4LumaPostBlurYKernels = static_cast<double**>(std::malloc(sizeof(double*)*(InpaintData->ChromaPixelHeight)));
-      if (!(InpaintData->Chroma4LumaPostBlurXKernelVectors && InpaintData->Chroma4LumaPostBlurYKernelVectors && InpaintData->Chroma4LumaPostBlurXKernels && InpaintData->Chroma4LumaPostBlurYKernels))
+      try
       {
-        ErrorText = "InpaintLogo: Could not allocate memory";
-      }
-      else
-      {
+        InpaintData->Chroma4LumaPostBlurXKernelVectors.resize(InpaintData->ChromaPixelWidth);
+        InpaintData->Chroma4LumaPostBlurYKernelVectors.resize(InpaintData->ChromaPixelHeight);
+        InpaintData->Chroma4LumaPostBlurXKernels.resize(InpaintData->ChromaPixelWidth, nullptr);
+        InpaintData->Chroma4LumaPostBlurYKernels.resize(InpaintData->ChromaPixelHeight, nullptr);
         for (k=0 ; k<InpaintData->ChromaPixelWidth ; k++)
-        {
-          InpaintData->Chroma4LumaPostBlurXKernelVectors[k] = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->Chroma4LumaPostBlurXKernelSize+1)));
-          if (!InpaintData->Chroma4LumaPostBlurXKernelVectors[k])  ErrorText = "InpaintLogo: Could not allocate memory";
-          InpaintData->Chroma4LumaPostBlurXKernels[k] = nullptr;
-        }
+          InpaintData->Chroma4LumaPostBlurXKernelVectors[k].resize(2*InpaintData->Chroma4LumaPostBlurXKernelSize+1);
         for (k=0 ; k<InpaintData->ChromaPixelHeight ; k++)
-        {
-          InpaintData->Chroma4LumaPostBlurYKernelVectors[k] = static_cast<double*>(std::malloc(sizeof(double)*(2*InpaintData->Chroma4LumaPostBlurYKernelSize+1)));
-          if (!InpaintData->Chroma4LumaPostBlurYKernelVectors[k])  ErrorText = "InpaintLogo: Could not allocate memory";
-          InpaintData->Chroma4LumaPostBlurYKernels[k] = nullptr;
-        }
+          InpaintData->Chroma4LumaPostBlurYKernelVectors[k].resize(2*InpaintData->Chroma4LumaPostBlurYKernelSize+1);
       }
+      catch (std::bad_alloc&)  { ErrorText = "InpaintLogo: Could not allocate memory"; }
     }
     InpaintData->StaticMaskData = nullptr;
     if (InpaintData->ChromaPixelWidth*InpaintData->ChromaPixelHeight>255)  ErrorText = "InpaintLogo internal error: Chroma subsampling to strong";
@@ -481,21 +489,21 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   if (!ErrorText)
   {
     /* Compute and store blur kernels */
-    if (InpaintData->LumaPreBlurXKernelVector)  InpaintData->LumaPreBlurXKernel = CreateGaussKernel(InpaintData->LumaPreBlurXKernelVector,InpaintData->LumaPreBlurXKernelSize,std::max<double>(PreBlur/InpaintData->PixelWidth,InpaintMinPreBlurXYStandardDeviation),0.0);
-    if (InpaintData->LumaPreBlurYKernelVector)  InpaintData->LumaPreBlurYKernel = CreateGaussKernel(InpaintData->LumaPreBlurYKernelVector,InpaintData->LumaPreBlurYKernelSize,std::max<double>(PreBlur/InpaintData->PixelHeight,InpaintMinPreBlurXYStandardDeviation),0.0);
+    if (!InpaintData->LumaPreBlurXKernelVector.empty())  InpaintData->LumaPreBlurXKernel = CreateGaussKernel(InpaintData->LumaPreBlurXKernelVector.data(),InpaintData->LumaPreBlurXKernelSize,std::max<double>(PreBlur/InpaintData->PixelWidth,InpaintMinPreBlurXYStandardDeviation),0.0);
+    if (!InpaintData->LumaPreBlurYKernelVector.empty())  InpaintData->LumaPreBlurYKernel = CreateGaussKernel(InpaintData->LumaPreBlurYKernelVector.data(),InpaintData->LumaPreBlurYKernelSize,std::max<double>(PreBlur/InpaintData->PixelHeight,InpaintMinPreBlurXYStandardDeviation),0.0);
     /* Most post blurring kernels are build for forward differences */
-    if (InpaintData->Luma4LumaPostBlurXKernelVector)  InpaintData->Luma4LumaPostBlurXKernel = CreateGaussKernel(InpaintData->Luma4LumaPostBlurXKernelVector,InpaintData->Luma4LumaPostBlurXKernelSize,std::max<double>(PostBlur/InpaintData->PixelWidth,InpaintMinPostBlurXYStandardDeviation),-0.5);
-    if (InpaintData->Luma4LumaPostBlurYKernelVector)  InpaintData->Luma4LumaPostBlurYKernel = CreateGaussKernel(InpaintData->Luma4LumaPostBlurYKernelVector,InpaintData->Luma4LumaPostBlurYKernelSize,std::max<double>(PostBlur/InpaintData->PixelHeight,InpaintMinPostBlurXYStandardDeviation),-0.5);
-    if (InpaintData->ChromaPreBlurXKernelVector)  InpaintData->ChromaPreBlurXKernel = CreateGaussKernel(InpaintData->ChromaPreBlurXKernelVector,InpaintData->ChromaPreBlurXKernelSize,std::max<double>(PreBlur/InpaintData->PixelWidth/InpaintData->ChromaPixelWidth,InpaintMinPreBlurXYStandardDeviation),0.0);
-    if (InpaintData->ChromaPreBlurYKernelVector)  InpaintData->ChromaPreBlurYKernel = CreateGaussKernel(InpaintData->ChromaPreBlurYKernelVector,InpaintData->ChromaPreBlurYKernelSize,std::max<double>(PreBlur/InpaintData->PixelHeight/InpaintData->ChromaPixelHeight,InpaintMinPreBlurXYStandardDeviation),0.0);
-    if (InpaintData->Chroma4ChromaPostBlurXKernelVector)  InpaintData->Chroma4ChromaPostBlurXKernel = CreateGaussKernel(InpaintData->Chroma4ChromaPostBlurXKernelVector,InpaintData->Chroma4ChromaPostBlurXKernelSize,std::max<double>(PostBlur/InpaintData->PixelWidth/InpaintData->ChromaPixelWidth,InpaintMinPostBlurXYStandardDeviation),-0.5);
-    if (InpaintData->Chroma4ChromaPostBlurYKernelVector)  InpaintData->Chroma4ChromaPostBlurYKernel = CreateGaussKernel(InpaintData->Chroma4ChromaPostBlurYKernelVector,InpaintData->Chroma4ChromaPostBlurYKernelSize,std::max<double>(PostBlur/InpaintData->PixelHeight/InpaintData->ChromaPixelHeight,InpaintMinPostBlurXYStandardDeviation),-0.5);
+    if (!InpaintData->Luma4LumaPostBlurXKernelVector.empty())  InpaintData->Luma4LumaPostBlurXKernel = CreateGaussKernel(InpaintData->Luma4LumaPostBlurXKernelVector.data(),InpaintData->Luma4LumaPostBlurXKernelSize,std::max<double>(PostBlur/InpaintData->PixelWidth,InpaintMinPostBlurXYStandardDeviation),-0.5);
+    if (!InpaintData->Luma4LumaPostBlurYKernelVector.empty())  InpaintData->Luma4LumaPostBlurYKernel = CreateGaussKernel(InpaintData->Luma4LumaPostBlurYKernelVector.data(),InpaintData->Luma4LumaPostBlurYKernelSize,std::max<double>(PostBlur/InpaintData->PixelHeight,InpaintMinPostBlurXYStandardDeviation),-0.5);
+    if (!InpaintData->ChromaPreBlurXKernelVector.empty())  InpaintData->ChromaPreBlurXKernel = CreateGaussKernel(InpaintData->ChromaPreBlurXKernelVector.data(),InpaintData->ChromaPreBlurXKernelSize,std::max<double>(PreBlur/InpaintData->PixelWidth/InpaintData->ChromaPixelWidth,InpaintMinPreBlurXYStandardDeviation),0.0);
+    if (!InpaintData->ChromaPreBlurYKernelVector.empty())  InpaintData->ChromaPreBlurYKernel = CreateGaussKernel(InpaintData->ChromaPreBlurYKernelVector.data(),InpaintData->ChromaPreBlurYKernelSize,std::max<double>(PreBlur/InpaintData->PixelHeight/InpaintData->ChromaPixelHeight,InpaintMinPreBlurXYStandardDeviation),0.0);
+    if (!InpaintData->Chroma4ChromaPostBlurXKernelVector.empty())  InpaintData->Chroma4ChromaPostBlurXKernel = CreateGaussKernel(InpaintData->Chroma4ChromaPostBlurXKernelVector.data(),InpaintData->Chroma4ChromaPostBlurXKernelSize,std::max<double>(PostBlur/InpaintData->PixelWidth/InpaintData->ChromaPixelWidth,InpaintMinPostBlurXYStandardDeviation),-0.5);
+    if (!InpaintData->Chroma4ChromaPostBlurYKernelVector.empty())  InpaintData->Chroma4ChromaPostBlurYKernel = CreateGaussKernel(InpaintData->Chroma4ChromaPostBlurYKernelVector.data(),InpaintData->Chroma4ChromaPostBlurYKernelSize,std::max<double>(PostBlur/InpaintData->PixelHeight/InpaintData->ChromaPixelHeight,InpaintMinPostBlurXYStandardDeviation),-0.5);
     /* Luma4Chroma kernel is centered in center pixel for odd ChPxSize, or in pixel left of center line for even ChPxSize */
-    if (InpaintData->Luma4ChromaPostBlurXKernelVector)  InpaintData->Luma4ChromaPostBlurXKernel = CreateGaussKernel(InpaintData->Luma4ChromaPostBlurXKernelVector,InpaintData->Luma4ChromaPostBlurXKernelSize,std::max<double>(PostBlur/InpaintData->PixelWidth,InpaintMinPostBlurXYStandardDeviation),(InpaintData->ChromaPixelWidth%2)?-0.5:0.0);
-    if (InpaintData->Luma4ChromaPostBlurYKernelVector)  InpaintData->Luma4ChromaPostBlurYKernel = CreateGaussKernel(InpaintData->Luma4ChromaPostBlurYKernelVector,InpaintData->Luma4ChromaPostBlurYKernelSize,std::max<double>(PostBlur/InpaintData->PixelHeight,InpaintMinPostBlurXYStandardDeviation),(InpaintData->ChromaPixelHeight%2)?-0.5:0.0);
+    if (!InpaintData->Luma4ChromaPostBlurXKernelVector.empty())  InpaintData->Luma4ChromaPostBlurXKernel = CreateGaussKernel(InpaintData->Luma4ChromaPostBlurXKernelVector.data(),InpaintData->Luma4ChromaPostBlurXKernelSize,std::max<double>(PostBlur/InpaintData->PixelWidth,InpaintMinPostBlurXYStandardDeviation),(InpaintData->ChromaPixelWidth%2)?-0.5:0.0);
+    if (!InpaintData->Luma4ChromaPostBlurYKernelVector.empty())  InpaintData->Luma4ChromaPostBlurYKernel = CreateGaussKernel(InpaintData->Luma4ChromaPostBlurYKernelVector.data(),InpaintData->Luma4ChromaPostBlurYKernelSize,std::max<double>(PostBlur/InpaintData->PixelHeight,InpaintMinPostBlurXYStandardDeviation),(InpaintData->ChromaPixelHeight%2)?-0.5:0.0);
     /* Chroma4Luma Kernels: Let k=0..ChPxSize-1 be number of luma pixel in chroma block. Kernel will be centered in luma pixel k, if: backward differences for 2k+1<ChPxSize, forward else */
-    if (InpaintData->Chroma4LumaPostBlurXKernelVectors)  for (k=0 ; k<InpaintData->ChromaPixelWidth ; k++)  InpaintData->Chroma4LumaPostBlurXKernels[k] = CreateGaussKernel(InpaintData->Chroma4LumaPostBlurXKernelVectors[k],InpaintData->Chroma4LumaPostBlurXKernelSize,std::max<double>(PostBlur/InpaintData->PixelWidth/InpaintData->ChromaPixelWidth,InpaintMinPostBlurXYStandardDeviation),(2.0*k+1.0)/2.0/InpaintData->ChromaPixelWidth-(2*k+1<InpaintData->ChromaPixelWidth?0.0:1.0));
-    if (InpaintData->Chroma4LumaPostBlurYKernelVectors)  for (k=0 ; k<InpaintData->ChromaPixelHeight ; k++)  InpaintData->Chroma4LumaPostBlurYKernels[k] = CreateGaussKernel(InpaintData->Chroma4LumaPostBlurYKernelVectors[k],InpaintData->Chroma4LumaPostBlurYKernelSize,std::max<double>(PostBlur/InpaintData->PixelHeight/InpaintData->ChromaPixelHeight,InpaintMinPostBlurXYStandardDeviation),(2.0*k+1.0)/2.0/InpaintData->ChromaPixelHeight-(2*k+1<InpaintData->ChromaPixelHeight?0.0:1.0));
+    if (!InpaintData->Chroma4LumaPostBlurXKernelVectors.empty())  for (k=0 ; k<InpaintData->ChromaPixelWidth ; k++)  InpaintData->Chroma4LumaPostBlurXKernels[k] = CreateGaussKernel(InpaintData->Chroma4LumaPostBlurXKernelVectors[k].data(),InpaintData->Chroma4LumaPostBlurXKernelSize,std::max<double>(PostBlur/InpaintData->PixelWidth/InpaintData->ChromaPixelWidth,InpaintMinPostBlurXYStandardDeviation),(2.0*k+1.0)/2.0/InpaintData->ChromaPixelWidth-(2*k+1<InpaintData->ChromaPixelWidth?0.0:1.0));
+    if (!InpaintData->Chroma4LumaPostBlurYKernelVectors.empty())  for (k=0 ; k<InpaintData->ChromaPixelHeight ; k++)  InpaintData->Chroma4LumaPostBlurYKernels[k] = CreateGaussKernel(InpaintData->Chroma4LumaPostBlurYKernelVectors[k].data(),InpaintData->Chroma4LumaPostBlurYKernelSize,std::max<double>(PostBlur/InpaintData->PixelHeight/InpaintData->ChromaPixelHeight,InpaintMinPostBlurXYStandardDeviation),(2.0*k+1.0)/2.0/InpaintData->ChromaPixelHeight-(2*k+1<InpaintData->ChromaPixelHeight?0.0:1.0));
   }
   if (!ErrorText && !InpaintData->MaskClip)
   {
@@ -676,8 +684,8 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   Chroma4ChromaPostBlurYKernel = InpaintData->Chroma4ChromaPostBlurYKernel;
   Luma4ChromaPostBlurXKernel = InpaintData->Luma4ChromaPostBlurXKernel;
   Luma4ChromaPostBlurYKernel = InpaintData->Luma4ChromaPostBlurYKernel;
-  Chroma4LumaPostBlurXKernels = InpaintData->Chroma4LumaPostBlurXKernels;
-  Chroma4LumaPostBlurYKernels = InpaintData->Chroma4LumaPostBlurYKernels;
+  Chroma4LumaPostBlurXKernels = InpaintData->Chroma4LumaPostBlurXKernels.data();
+  Chroma4LumaPostBlurYKernels = InpaintData->Chroma4LumaPostBlurYKernels.data();
   LumaPreBlurXKernelSize = InpaintData->LumaPreBlurXKernelSize;
   LumaPreBlurYKernelSize = InpaintData->LumaPreBlurYKernelSize;
   ChromaPreBlurXKernelSize = InpaintData->ChromaPreBlurXKernelSize;
@@ -876,39 +884,13 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
 void  AVSC_CC  Inpaint_Free(AVS_FilterInfo *  FilterInfo)
 {
   InpaintDataStruct * InpaintData;
-  int  k;
-
 
   if (FilterInfo->user_data)
   {
     InpaintData = static_cast<InpaintDataStruct*>(FilterInfo->user_data);
     if (InpaintData->StaticMaskData)  InpaintPrepareMask(&InpaintData->StaticMaskData,nullptr,InpaintData);
-    if (InpaintData->Chroma4LumaPostBlurYKernels)  std::free(InpaintData->Chroma4LumaPostBlurYKernels);
-    if (InpaintData->Chroma4LumaPostBlurXKernels)  std::free(InpaintData->Chroma4LumaPostBlurXKernels);
-    if (InpaintData->Chroma4LumaPostBlurYKernelVectors)
-    {
-      k = InpaintData->ChromaPixelHeight;
-      while (k--)  if (InpaintData->Chroma4LumaPostBlurYKernelVectors[k])  std::free(InpaintData->Chroma4LumaPostBlurYKernelVectors[k]);
-      std::free(InpaintData->Chroma4LumaPostBlurYKernelVectors);
-    }
-    if (InpaintData->Chroma4LumaPostBlurXKernelVectors)
-    {
-      k = InpaintData->ChromaPixelWidth;
-      while (k--)  if (InpaintData->Chroma4LumaPostBlurXKernelVectors[k])  std::free(InpaintData->Chroma4LumaPostBlurXKernelVectors[k]);
-      std::free(InpaintData->Chroma4LumaPostBlurXKernelVectors);
-    }
-    if (InpaintData->Luma4ChromaPostBlurYKernelVector)  std::free(InpaintData->Luma4ChromaPostBlurYKernelVector);
-    if (InpaintData->Luma4ChromaPostBlurXKernelVector)  std::free(InpaintData->Luma4ChromaPostBlurXKernelVector);
-    if (InpaintData->Chroma4ChromaPostBlurYKernelVector)  std::free(InpaintData->Chroma4ChromaPostBlurYKernelVector);
-    if (InpaintData->Chroma4ChromaPostBlurXKernelVector)  std::free(InpaintData->Chroma4ChromaPostBlurXKernelVector);
-    if (InpaintData->Luma4LumaPostBlurYKernelVector)  std::free(InpaintData->Luma4LumaPostBlurYKernelVector);
-    if (InpaintData->Luma4LumaPostBlurXKernelVector)  std::free(InpaintData->Luma4LumaPostBlurXKernelVector);
-    if (InpaintData->ChromaPreBlurYKernelVector)  std::free(InpaintData->ChromaPreBlurYKernelVector);
-    if (InpaintData->ChromaPreBlurXKernelVector)  std::free(InpaintData->ChromaPreBlurXKernelVector);
-    if (InpaintData->LumaPreBlurYKernelVector)  std::free(InpaintData->LumaPreBlurYKernelVector);
-    if (InpaintData->LumaPreBlurXKernelVector)  std::free(InpaintData->LumaPreBlurXKernelVector);
     if (InpaintData->MaskClip)  avs_release_clip(InpaintData->MaskClip);
-    std::free(InpaintData);
+    delete InpaintData;
   }
   FilterInfo->user_data = nullptr;
 }
