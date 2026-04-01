@@ -112,9 +112,10 @@ typedef  uint32_t  Analyze_Sum2Type;
 struct InpaintMaskDataStruct
 {
   int  OffsetX, OffsetY, Width, Height, MaskPixelCount;
-  unsigned int * MaskPixelOrder;
-  BYTE * chiLuma, * chiChroma;
-  float * GchiLuma, * GchiChroma;
+  std::vector<unsigned int>  MaskPixelOrder;
+  std::vector<BYTE>          chiLuma, chiChroma;
+  std::vector<float>         GchiLuma, GchiChroma;
+  InpaintMaskDataStruct() : OffsetX(0), OffsetY(0), Width(0), Height(0), MaskPixelCount(0) {}
 };
 
 struct InpaintDataStruct
@@ -707,7 +708,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   Width = MaskData->Width;
   Height = MaskData->Height;
   MaskPixelCount = MaskData->MaskPixelCount;
-  MaskPixelOrder = MaskData->MaskPixelOrder;
+  MaskPixelOrder = MaskData->MaskPixelOrder.data();
   /* As usual, ErrorText stores a text message, if an error occured */
   ErrorText = nullptr;
   FrameData[0] = nullptr;
@@ -719,19 +720,19 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   try
   {
     if (InpaintData->StaticMaskData)  { chiLumaVec.resize(Width*Height);  chiLuma = chiLumaVec.data(); }
-    else  chiLuma = MaskData->chiLuma;
+    else  chiLuma = MaskData->chiLuma.data();
     if (LumaWeight!=0.0)
     {
       if (InpaintData->StaticMaskData)  { GchiLumaVec.resize(Width*Height);  GchiLuma = GchiLumaVec.data(); }
-      else  GchiLuma = MaskData->GchiLuma;
+      else  GchiLuma = MaskData->GchiLuma.data();
       GchiuLumaVec.resize(Width*Height);  GchiuLuma = GchiuLumaVec.data();
     }
     if (InpaintData->StaticMaskData)  { chiChromaVec.resize(Width*Height);  chiChroma = chiChromaVec.data(); }
-    else  chiChroma = MaskData->chiChroma;
+    else  chiChroma = MaskData->chiChroma.data();
     if (ChromaWeight!=0.0)
     {
       if (InpaintData->StaticMaskData)  { GchiChromaVec.resize((Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));  GchiChroma = GchiChromaVec.data(); }
-      else  GchiChroma = MaskData->GchiChroma;
+      else  GchiChroma = MaskData->GchiChroma.data();
       for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)
       {
         GchiuChromasVec[ChannelNo].resize((Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
@@ -756,11 +757,11 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   /* Prepare blurred images */
   if (InpaintData->StaticMaskData)
   {
-    std::memcpy(chiLuma,MaskData->chiLuma,sizeof(BYTE)*Width*Height);
+    std::memcpy(chiLuma,MaskData->chiLuma.data(),sizeof(BYTE)*Width*Height);
     if(ChromaChannelCount)
-      std::memcpy(chiChroma,MaskData->chiChroma,sizeof(BYTE)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
-    if (LumaWeight!=0.0)  std::memcpy(GchiLuma,MaskData->GchiLuma,sizeof(float)*Width*Height);
-    if (ChromaWeight!=0.0)  std::memcpy(GchiChroma,MaskData->GchiChroma,sizeof(float)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
+      std::memcpy(chiChroma,MaskData->chiChroma.data(),sizeof(BYTE)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
+    if (LumaWeight!=0.0)  std::memcpy(GchiLuma,MaskData->GchiLuma.data(),sizeof(float)*Width*Height);
+    if (ChromaWeight!=0.0)  std::memcpy(GchiChroma,MaskData->GchiChroma.data(),sizeof(float)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
   }
   if (LumaWeight!=0.0)
   {
@@ -1947,36 +1948,20 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
   MaskData = *MaskDataPtr;
   if (MaskData)
   {
-    if (MaskData->GchiChroma)  std::free(MaskData->GchiChroma);
-    if (MaskData->GchiLuma)  std::free(MaskData->GchiLuma);
-    if (MaskData->MaskPixelOrder)  std::free(MaskData->MaskPixelOrder);
-    if (MaskData->chiChroma)  std::free(MaskData->chiChroma);
-    if (MaskData->chiLuma)  std::free(MaskData->chiLuma);
+    delete MaskData;
+    MaskData = nullptr;
     *MaskDataPtr = nullptr;
   }
   if (!(Frame && GetFramePointers(Frame,nullptr,FrameData,FramePitch,nullptr,nullptr,nullptr,InpaintData->MaskPixelType) && FrameData[0]))
-  {
-    if (MaskData)  std::free(MaskData);
     return  Frame?InpaintMaskResult::FrameError:InpaintMaskResult::NoMask;
-  }
-  if (!MaskData)  MaskData = static_cast<InpaintMaskDataStruct*>(std::malloc(sizeof(InpaintMaskDataStruct)));
+  MaskData = new (std::nothrow) InpaintMaskDataStruct;
   if (!MaskData)  return  InpaintMaskResult::MemoryError;
-  MaskData->chiLuma = nullptr;
-  MaskData->GchiLuma = nullptr;
-  MaskData->chiChroma = nullptr;
-  MaskData->GchiChroma = nullptr;
-  MaskData->MaskPixelOrder = nullptr;
-  MaskData->MaskPixelCount = 0;
-  MaskData->OffsetX = 0;
-  MaskData->OffsetY = 0;
   MaskData->Width = Width = InpaintData->Width;
   MaskData->Height = Height = InpaintData->Height;
-  DistFcn = static_cast<float*>(std::malloc(sizeof(float)*Width*Height));
-  if (!DistFcn)
-  {
-    std::free(MaskData);
-    return  InpaintMaskResult::MemoryError;
-  }
+  std::vector<float> DistFcnVec;
+  try  { DistFcnVec.resize(Width*Height); }
+  catch (std::bad_alloc&)  { delete MaskData;  return  InpaintMaskResult::MemoryError; }
+  DistFcn = DistFcnVec.data();
   Pitch = FramePitch[InpaintData->MaskChannelNo];
   Stride = InpaintData->MaskStride;
   MaskSize = 0;
@@ -1999,8 +1984,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
   }
   if (!MaskSize || (MaskSize==Width*Height))
   {
-    std::free(MaskData);
-    std::free(DistFcn);
+    delete MaskData;
     return  (MaskSize)?InpaintMaskResult::FullMask:InpaintMaskResult::NoMask;
   }
   /* We create a halo around the inpainting mask. Outside of this halo nothing will happen! */
@@ -2019,8 +2003,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
   PixelHeight = std::max<double>(PixelHeight,2.0);
   if (!FastMarching(DistFcn,nullptr,Width,Height,1.0/PixelWidth,1.0/PixelHeight))
   {
-    std::free(MaskData);
-    std::free(DistFcn);
+    delete MaskData;
     return  InpaintMaskResult::MemoryError;
   }
   u = DistFcn;
@@ -2073,20 +2056,20 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
     MaskData->OffsetY = ymin;
     MaskData->Width = Width = xmax-xmin;
     MaskData->Height = Height = ymax-ymin;
-    MaskData->chiLuma = static_cast<BYTE*>(std::malloc(sizeof(BYTE)*Width*Height));
-    if (!MaskData->chiLuma)  Result = InpaintMaskResult::MemoryError;
-    if (InpaintData->ChromaChannelCount)
+    try
     {
-      MaskData->chiChroma = static_cast<BYTE*>(std::calloc((Width/InpaintData->ChromaPixelWidth)*(Height/InpaintData->ChromaPixelHeight),sizeof(BYTE)));
-      if (!MaskData->chiChroma)  Result = InpaintMaskResult::MemoryError;
+      MaskData->chiLuma.resize(Width*Height);
+      if (InpaintData->ChromaChannelCount)
+        MaskData->chiChroma.resize((Width/InpaintData->ChromaPixelWidth)*(Height/InpaintData->ChromaPixelHeight), 0);
     }
+    catch (std::bad_alloc&)  { Result = InpaintMaskResult::MemoryError; }
     if (MaskSize==Width*Height)  Result = InpaintMaskResult::GeneralError;
   }
   if (Result==InpaintMaskResult::OK)
   {
     /* The halo ist still stored in DistFcn */
     u = DistFcn+MaskData->OffsetY*InpaintData->Width+MaskData->OffsetX;
-    chi = MaskData->chiLuma;
+    chi = MaskData->chiLuma.data();
     /* Transfer the halo to chi: chi=0 for inpainting domain or halo, chi=1 in far-away-region
        chi should also be 1 in the inpainting domain - we'll set that later */
     for (y=0 ; y<Height ; y++)
@@ -2098,7 +2081,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
     MaskData->MaskPixelCount = MaskSize;
     DataPtr = FrameData[InpaintData->MaskChannelNo]+MaskData->OffsetY*Pitch+MaskData->OffsetX*Stride;
     u = DistFcn;
-    chi = MaskData->chiLuma;
+    chi = MaskData->chiLuma.data();
     if (InpaintData->FlipMask)  DataPtr -= (InpaintData->Height-1)*Pitch;  /* Pitch is negative already ! */
     /* We set chi=1 in the inpainting domain */
     for (y=0 ; y<Height ; y++)
@@ -2117,9 +2100,9 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
   }
   if (Result==InpaintMaskResult::OK)
   {
-    if (MaskData->chiChroma)
+    if (!MaskData->chiChroma.empty())
     {
-      chi = MaskData->chiLuma;
+      chi = MaskData->chiLuma.data();
       for (y=0 ; y<Height ; y++)
       {
         for (x=0 ; x<Width ; x++)
@@ -2128,49 +2111,46 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
         }
       }
     }
-    MaskData->MaskPixelOrder = static_cast<unsigned int*>(std::malloc(sizeof(unsigned int)*MaskData->MaskPixelCount));
+    try  { MaskData->MaskPixelOrder.resize(MaskData->MaskPixelCount); }
+    catch (std::bad_alloc&)  { Result = InpaintMaskResult::MemoryError; }
     /* We call FastMarching to determine the inpainting pixel order */
-    if (!(MaskData->MaskPixelOrder && FastMarching(DistFcn,MaskData->MaskPixelOrder,Width,Height,InpaintData->PixelWidth,InpaintData->PixelHeight)))  Result = InpaintMaskResult::MemoryError;
+    if (Result==InpaintMaskResult::OK && !FastMarching(DistFcn,MaskData->MaskPixelOrder.data(),Width,Height,InpaintData->PixelWidth,InpaintData->PixelHeight))  Result = InpaintMaskResult::MemoryError;
   }
-  if (DistFcn)  std::free(DistFcn);
+  /* DistFcnVec goes out of scope here and releases automatically */
   if (Result==InpaintMaskResult::OK)
   {
     if ((InpaintData->MaxSteps>=0)&&(InpaintData->MaxSteps<MaskData->MaskPixelCount))
     {
       MaskData->MaskPixelCount = InpaintData->MaxSteps;
-      MaskData->MaskPixelOrder = static_cast<unsigned int*>(std::realloc(MaskData->MaskPixelOrder,sizeof(unsigned int)*MaskData->MaskPixelCount));
+      MaskData->MaskPixelOrder.resize(MaskData->MaskPixelCount);  /* shrink: no reallocation failure possible */
     }
-    if (InpaintData->LumaWeight!=0.0)
+    try
     {
-      MaskData->GchiLuma = static_cast<float*>(std::malloc(sizeof(float)*Width*Height));
-      if (!MaskData->GchiLuma)  Result = InpaintMaskResult::MemoryError;
+      if (InpaintData->LumaWeight!=0.0)    MaskData->GchiLuma.resize(Width*Height);
+      if (InpaintData->ChromaWeight!=0.0)  MaskData->GchiChroma.resize((Width/InpaintData->ChromaPixelWidth)*(Height/InpaintData->ChromaPixelHeight));
     }
-    if (InpaintData->ChromaWeight!=0.0)
-    {
-      MaskData->GchiChroma = static_cast<float*>(std::malloc(sizeof(float)*(Width/InpaintData->ChromaPixelWidth)*(Height/InpaintData->ChromaPixelHeight)));
-      if (!MaskData->GchiChroma)  Result = InpaintMaskResult::MemoryError;
-    }
+    catch (std::bad_alloc&)  { Result = InpaintMaskResult::MemoryError; }
   }
   if (Result==InpaintMaskResult::OK)
   {
-    if (MaskData->GchiLuma)
+    if (!MaskData->GchiLuma.empty())
     {
-      Gchi = MaskData->GchiLuma;
+      Gchi = MaskData->GchiLuma.data();
       for (k=0 ; k<Width*Height ; k++)  *(Gchi++) = 0.0f;
-      chi = MaskData->chiLuma;
-      Gchi = MaskData->GchiLuma;
+      chi = MaskData->chiLuma.data();
+      Gchi = MaskData->GchiLuma.data();
       for (k=0 ; k<Width*Height ; k++)  if (!chi[k])  AddPreBlurValue(Gchi,k%Width,k/Width,Width,Height,1.0,InpaintData->LumaPreBlurXKernel,InpaintData->LumaPreBlurXKernelSize,InpaintData->LumaPreBlurYKernel,InpaintData->LumaPreBlurYKernelSize);
     }
-    if (MaskData->GchiChroma)
+    if (!MaskData->GchiChroma.empty())
     {
-      Gchi = MaskData->GchiChroma;
+      Gchi = MaskData->GchiChroma.data();
       for (k=0 ; k<(Width/InpaintData->ChromaPixelWidth)*(Height/InpaintData->ChromaPixelHeight) ; k++)  *(Gchi++) = 0.0f;
-      chi = MaskData->chiChroma;
-      Gchi = MaskData->GchiChroma;
+      chi = MaskData->chiChroma.data();
+      Gchi = MaskData->GchiChroma.data();
       for (k=0 ; k<(Width/InpaintData->ChromaPixelWidth)*(Height/InpaintData->ChromaPixelHeight) ; k++)  if (!chi[k])  AddPreBlurValue(Gchi,k%(Width/InpaintData->ChromaPixelWidth),k/(Width/InpaintData->ChromaPixelWidth),Width/InpaintData->ChromaPixelWidth,Height/InpaintData->ChromaPixelHeight,1.0,InpaintData->ChromaPreBlurXKernel,InpaintData->ChromaPreBlurXKernelSize,InpaintData->ChromaPreBlurYKernel,InpaintData->ChromaPreBlurYKernelSize);
     }
   }
-  if (Result!=InpaintMaskResult::OK)  InpaintPrepareMask(&MaskData,nullptr,nullptr);
+  if (Result!=InpaintMaskResult::OK)  { delete MaskData;  MaskData = nullptr; }
   *MaskDataPtr = MaskData;
   return  Result;
 }
