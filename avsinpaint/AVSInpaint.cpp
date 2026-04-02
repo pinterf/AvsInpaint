@@ -1227,7 +1227,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   MaskSize = 0;
   DestFrame = nullptr;
   AnalyzeResult = 0;
-  DestVideoInfo = nullptr;
+  AVS_VideoInfo DestVideoInfoBuf = {};  DestVideoInfo = &DestVideoInfoBuf;
   ComputeAlpha = avs_is_bool(avs_array_elt(Args,2)) ? (avs_as_bool(avs_array_elt(Args,2)) != 0) : true;
   DeviationWeight = avs_is_float(avs_array_elt(Args,3))?avs_as_float(avs_array_elt(Args,3)):0.5;
   if (DeviationWeight<0.0)  return  avs_new_value_error("Analyze: Deviation weight must not be negative" "\n\n" LegalInfoString);
@@ -1293,10 +1293,12 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   /* Release mask clip */
   if (MaskClip)  avs_release_clip(MaskClip);
   /* Allocate mask memory */
+  std::vector<BYTE> MaskVec;
   if (!ErrorText)
   {
-    Mask = static_cast<BYTE*>(std::malloc(sizeof(BYTE)*SrcVideoInfo->width*SrcVideoInfo->height));
-    if (!Mask)  ErrorText = "Analyze: Could not allocate memory";
+    try  { MaskVec.resize(SrcVideoInfo->width*SrcVideoInfo->height); }
+    catch (std::bad_alloc&)  { ErrorText = "Analyze: Could not allocate memory"; }
+    Mask = MaskVec.data();
   }
   /* Determine mask from mask frame: All values above some threshold are masked */
   if (!ErrorText)
@@ -1332,11 +1334,6 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   /* Target frame is allocated */
   if (!ErrorText)
   {
-    DestVideoInfo = static_cast<AVS_VideoInfo*>(std::malloc(sizeof(AVS_VideoInfo)));
-    if (!DestVideoInfo)  ErrorText = "Analyze: Could not allocate memory";
-  }
-  if (!ErrorText)
-  {
     DestVideoInfo[0] = SrcVideoInfo[0];
     if (MaskGiven)  DestVideoInfo->height *= 2;
     DestFrame = avs_new_video_frame(Env,DestVideoInfo);
@@ -1351,9 +1348,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     if (AnalyzeResult==Analyze_Result_MemoryError)  ErrorText = "Analyze: Could not allocate memory";
     if (AnalyzeResult==Analyze_Result_GeneralError)  ErrorText = "Analyze: A totally strange error occured while passing the source clip";
   }
-  /* Free mask memory and source clip */
-  if (DestVideoInfo)  std::free(DestVideoInfo);
-  if (Mask)  std::free(Mask);
+  /* Release source clip */
   if (SrcClip)  avs_release_clip(SrcClip);
   /* Create filter */
   if (!ErrorText)
@@ -1433,7 +1428,7 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
   if (!ErrorText)
   {
     /* Allocate data struct */
-    DistFcnData = static_cast<DistanceFunctionDataStruct*>(std::malloc(sizeof(DistanceFunctionDataStruct)));
+    DistFcnData = new (std::nothrow) DistanceFunctionDataStruct;
     if (!DistFcnData)  ErrorText = "DistanceFunction: Could not allocate memory";
   }
   if (DistFcnData)
@@ -1510,11 +1505,12 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
     }
     return  Frame;
   }
-  DistFcn = static_cast<float*>(std::malloc(sizeof(float)*Width*Height));
-  if (!DistFcn)  ErrorText = "DistanceFunction: Could not allocate memory";
+  std::vector<float> DistFcnVec;
+  try  { DistFcnVec.resize(Width*Height); }
+  catch (std::bad_alloc&)  { ErrorText = "DistanceFunction: Could not allocate memory"; }
+  DistFcn = DistFcnVec.data();
   if (ErrorText || !FrameData[DistFcnData->LumaChannelNo])
   {
-    if (DistFcn)  std::free(DistFcn);
     if (!FrameData[DistFcnData->LumaChannelNo])  ErrorText = "DistanceFunction: Could not get pixel data pointers";
     if (Frame)  avs_release_video_frame(Frame);  else  ErrorText = "DistanceFunction: Could not get video Frame";
     FilterInfo->error = ErrorText;
@@ -1533,7 +1529,6 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
   }
   if (!FastMarching(DistFcn,nullptr,Width,Height,DistFcnData->PixelWidth,DistFcnData->PixelHeight))
   {
-    std::free(DistFcn);
     avs_release_video_frame(Frame);
     FilterInfo->error = "DistanceFunction: Mask processing failed: Out of memory";
     return  nullptr;
@@ -1552,7 +1547,6 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
     }
     DataPtr += Pitch-Width*Stride;
   }
-  std::free(DistFcn);
   if (ScaleSign*MaskThresholdSign>0)
   {
     DataPtr = FrameData[DistFcnData->LumaChannelNo];
@@ -1573,7 +1567,7 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
 
 void  AVSC_CC  DistanceFunction_Free(AVS_FilterInfo *  FilterInfo)
 {
-  if (FilterInfo->user_data)  std::free(FilterInfo->user_data);
+  if (FilterInfo->user_data)  delete static_cast<DistanceFunctionDataStruct*>(FilterInfo->user_data);
 }
 
 
@@ -2876,8 +2870,10 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   }
   /*** PHASE 3: Compute transparency values and color values for each pixel of the logo (each mask pixel) and store in destination frame ***/
   /** We start with the alpha channel - it is needed to compute the color channels **/
-  AlphaChannel = static_cast<float*>(std::malloc(sizeof(float)*Width*Height));
-  if (!AlphaChannel)  return  Analyze_Result_MemoryError;
+  std::vector<float> AlphaChannelVec;
+  try  { AlphaChannelVec.resize(Width*Height); }
+  catch (std::bad_alloc&)  { return  Analyze_Result_MemoryError; }
+  AlphaChannel = AlphaChannelVec.data();
   if (ComputeAlpha)
   {
     /* Here is THE CORE ALGORITHM for computing the alpha channel out of all the variances gathered before */
@@ -2933,10 +2929,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   /** The destination frame pointers are determined **/
   /* Now we're approaching color-space dependent code !! */
   if (!GetFramePointers(DestFrame,DestData,nullptr,FramePitch,nullptr,nullptr,nullptr,SrcVideoInfo->pixel_type))
-  {
-    if (AlphaChannel)  std::free(AlphaChannel);
     return  Analyze_Result_DestFrameError;
-  }
   if (avs_is_yuv(SrcVideoInfo))
   {
     AlphaData = DestData[0]+Height*FramePitch[0];
@@ -2966,7 +2959,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
     if (PixelWidth[ChannelNo]*PixelHeight[ChannelNo]>1)
     {
       try  { ChannelAlphaVector.resize((Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])); }
-      catch (std::bad_alloc&)  { if (AlphaChannel)  std::free(AlphaChannel);  return  Analyze_Result_MemoryError; }
+      catch (std::bad_alloc&)  { return  Analyze_Result_MemoryError; }
       break;
     }
     ChannelNo++;
@@ -3019,7 +3012,6 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       }
     }
   }
-  if (AlphaChannel)  std::free(AlphaChannel);
   if (DestVideoInfo->height>SrcVideoInfo->height)
   {
     if (avs_is_yuv(SrcVideoInfo))
