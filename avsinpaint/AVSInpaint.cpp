@@ -599,16 +599,14 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
 
 
 
-AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  FrameNo)
+static const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDataStruct *  MaskData,  uint8_t *  FrameData[],  const int  FramePitch[])
 {
-  InpaintDataStruct * InpaintData;
-  InpaintMaskDataStruct * MaskData;
-  AVS_VideoFrame * Frame;
-  uint8_t * FrameData[MaxChannelCount], * LumaData, * ChromaDatas[MaxChannelCount-1], * ChromaData;
-  int  FramePitch[MaxChannelCount], LumaPitch, * ChromaPitch;
+  uint8_t * LumaData, * ChromaDatas[MaxChannelCount-1], * ChromaData;
+  int  LumaPitch;
+  const int * ChromaPitch;
   int  x, y, PixelNo, ChannelNo;
   double  CoherenceStrength, CoherenceDirectionX, CoherenceDirectionY, TensorXX, TensorXY, TensorYY, Value;
-  const char * ErrorText;
+  const char * ErrorText = nullptr;
   /* Values given by the user */
   double  PixelWidth2, PixelHeight2;
   double  LumaWeight, ChromaWeight;
@@ -621,7 +619,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   double * Luma4LumaPostBlurXKernel, * Luma4LumaPostBlurYKernel;
   double * Chroma4ChromaPostBlurXKernel, * Chroma4ChromaPostBlurYKernel;
   double * Luma4ChromaPostBlurXKernel, * Luma4ChromaPostBlurYKernel;
-  double ** Chroma4LumaPostBlurXKernels, ** Chroma4LumaPostBlurYKernels;
+  double * const * Chroma4LumaPostBlurXKernels, * const * Chroma4LumaPostBlurYKernels;
   int  LumaPreBlurXKernelSize, LumaPreBlurYKernelSize, ChromaPreBlurXKernelSize, ChromaPreBlurYKernelSize;
   int  Luma4LumaPostBlurXKernelSize, Luma4LumaPostBlurYKernelSize;
   int  Chroma4ChromaPostBlurXKernelSize, Chroma4ChromaPostBlurYKernelSize;
@@ -637,57 +635,6 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   std::vector<float> GchiuChromasVec[MaxChannelCount-1];
   float * GchiuChromas[MaxChannelCount], * GchiuChroma;
 
-  InpaintData = static_cast<InpaintDataStruct*>(FilterInfo->user_data);
-  /* If the logo is dynamic, we prepare the mask stuff */
-  MaskData = InpaintData->StaticMaskData;
-  if (!MaskData)
-  {
-    ErrorText = nullptr;
-    Frame = avs_get_frame(InpaintData->MaskClip,(FrameNo<InpaintData->MaskFrameCount)?FrameNo:(InpaintData->MaskFrameCount-1));
-    if (!Frame)  ErrorText = "InpaintLogo: Could not get mask frame";
-    if (!ErrorText)
-    {
-      switch (AvsInpaintPrepareMask(&MaskData,Frame,InpaintData))
-      {
-        case InpaintMaskResult::FullMask :
-        #if ((InpaintFullMaskError)>=2)
-          ErrorText = "InpaintLogo: Mask is full";
-        break;
-        #endif
-        case InpaintMaskResult::NoMask :
-          /* (still) no mask data indicates nothing to do */
-          /* InpaintPrepareMask(&MaskData,0,InpaintData);  ** Not necessary */
-          break;
-        case InpaintMaskResult::GeneralError :
-          ErrorText = "InpaintLogo: Mask preparation failed: Internal error";
-        break;
-        case InpaintMaskResult::FrameError :
-          ErrorText = "InpaintLogo: Mask preparation failed: Could not process mask frame";
-        break;
-        case InpaintMaskResult::MemoryError :
-          ErrorText = "InpaintLogo: Mask preparation failed: Out of memory";
-        break;
-        default :
-          ErrorText = nullptr;
-        break;
-      }
-    }
-    if (Frame)  avs_release_video_frame(Frame);
-    if (ErrorText)
-    {
-      FilterInfo->error = ErrorText;
-      delete MaskData;  MaskData = nullptr;
-      return  nullptr;
-    }
-  }
-  /* Get video frame */
-  Frame = avs_get_frame(FilterInfo->child,FrameNo);
-  if (!(MaskData&&Frame))  /* No mask data? Then we just return the source frame */
-  {
-    if (!InpaintData->StaticMaskData)  { delete MaskData;  MaskData = nullptr; }
-    if (!Frame)  FilterInfo->error = "InpaintLogo: Could not get video frame";
-    return  Frame;
-  }
   /* Store all important values locally */
   PixelWidth2 = InpaintData->PixelWidth*InpaintData->PixelWidth;
   PixelHeight2 = InpaintData->PixelHeight*InpaintData->PixelHeight;
@@ -738,12 +685,6 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   const int CWidth     = ChromaPixelWidth  > 0 ? Width  / ChromaPixelWidth  : 0;
   const int CHeight    = ChromaPixelHeight > 0 ? Height / ChromaPixelHeight : 0;
   const int ChromaArea = CWidth * CHeight;
-  /* As usual, ErrorText stores a text message, if an error occured */
-  ErrorText = nullptr;
-  FrameData[0] = nullptr;
-  if (Frame)  avs_make_writable(FilterInfo->env,&Frame);
-  if (Frame && !AvsGetFramePlanes(Frame,InpaintData->srcLayout,FrameData,FramePitch))  FrameData[0] = nullptr;
-  if (!FrameData[0])  ErrorText = "InpaintLogo: Could not get pixel data pointers";
   /* Allocate temporary memory */
   for (ChannelNo=0 ; ChannelNo<MaxChannelCount-1 ; ChannelNo++)  GchiuChromas[ChannelNo] = nullptr;
   try
@@ -770,14 +711,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
     }
   }
   catch (std::bad_alloc&)  { ErrorText = "InpaintLogo: Could not allocate memory"; }
-  /* Error? Then run away */
-  if (ErrorText)
-  {
-    if (!InpaintData->StaticMaskData)  { delete MaskData;  MaskData = nullptr; }
-    if (Frame)  avs_release_video_frame(Frame);  else  ErrorText = "InpaintLogo: Could not get video Frame";
-    FilterInfo->error = ErrorText;
-    return  nullptr;
-  }
+  if (ErrorText)  return  ErrorText;
   /* Prepare pointers */
   LumaPitch = FramePitch[0];
   ChromaPitch = FramePitch+1;
@@ -909,12 +843,85 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
     }
     if (chiChroma[CWidth*y+x])  chiChroma[CWidth*y+x]--;
   }
+  return  ErrorText;
+}
+
+
+
+AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  FrameNo)
+{
+  InpaintDataStruct * InpaintData;
+  InpaintMaskDataStruct * MaskData;
+  AVS_VideoFrame * Frame;
+  uint8_t * FrameData[MaxChannelCount];
+  int  FramePitch[MaxChannelCount];
+  const char * ErrorText;
+
+  InpaintData = static_cast<InpaintDataStruct*>(FilterInfo->user_data);
+  /* If the logo is dynamic, we prepare the mask stuff */
+  MaskData = InpaintData->StaticMaskData;
+  if (!MaskData)
+  {
+    ErrorText = nullptr;
+    Frame = avs_get_frame(InpaintData->MaskClip,(FrameNo<InpaintData->MaskFrameCount)?FrameNo:(InpaintData->MaskFrameCount-1));
+    if (!Frame)  ErrorText = "InpaintLogo: Could not get mask frame";
+    if (!ErrorText)
+    {
+      switch (AvsInpaintPrepareMask(&MaskData,Frame,InpaintData))
+      {
+        case InpaintMaskResult::FullMask :
+        #if ((InpaintFullMaskError)>=2)
+          ErrorText = "InpaintLogo: Mask is full";
+        break;
+        #endif
+        case InpaintMaskResult::NoMask :
+          /* (still) no mask data indicates nothing to do */
+          break;
+        case InpaintMaskResult::GeneralError :
+          ErrorText = "InpaintLogo: Mask preparation failed: Internal error";
+        break;
+        case InpaintMaskResult::FrameError :
+          ErrorText = "InpaintLogo: Mask preparation failed: Could not process mask frame";
+        break;
+        case InpaintMaskResult::MemoryError :
+          ErrorText = "InpaintLogo: Mask preparation failed: Out of memory";
+        break;
+        default :
+          ErrorText = nullptr;
+        break;
+      }
+    }
+    if (Frame)  avs_release_video_frame(Frame);
+    if (ErrorText)
+    {
+      FilterInfo->error = ErrorText;
+      delete MaskData;  MaskData = nullptr;
+      return  nullptr;
+    }
+  }
+  /* Get video frame */
+  Frame = avs_get_frame(FilterInfo->child,FrameNo);
+  if (!(MaskData&&Frame))  /* No mask data? Then we just return the source frame */
+  {
+    if (!InpaintData->StaticMaskData)  { delete MaskData;  MaskData = nullptr; }
+    if (!Frame)  FilterInfo->error = "InpaintLogo: Could not get video frame";
+    return  Frame;
+  }
+  avs_make_writable(FilterInfo->env,&Frame);
+  if (!AvsGetFramePlanes(Frame,InpaintData->srcLayout,FrameData,FramePitch) || !FrameData[0])
+  {
+    if (!InpaintData->StaticMaskData)  { delete MaskData;  MaskData = nullptr; }
+    avs_release_video_frame(Frame);
+    FilterInfo->error = "InpaintLogo: Could not get pixel data pointers";
+    return  nullptr;
+  }
+  ErrorText = InpaintCore(InpaintData, MaskData, FrameData, FramePitch);
   if (!InpaintData->StaticMaskData)  { delete MaskData;  MaskData = nullptr; }
   if (ErrorText)
   {
-    if (Frame)  avs_release_video_frame(Frame);
-    Frame = nullptr;
+    avs_release_video_frame(Frame);
     FilterInfo->error = ErrorText;
+    return  nullptr;
   }
   return  Frame;
 }
