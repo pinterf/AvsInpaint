@@ -81,6 +81,17 @@ enum class InpaintMaskResult : int
 constexpr int  MaxChannelCount  = 4;  /* Maximal number of color channels for all color spaces */
 
 
+/* Physical layout of a video frame: all information derivable from pixel format alone, independent of any API */
+struct FrameLayout
+{
+  int  channelCount;
+  int  stride[MaxChannelCount];       /* bytes between adjacent samples within a row (1 for planar, 2+ for packed) */
+  int  pixelWidth[MaxChannelCount];   /* horizontal subsampling factor (1 = full-res, 2 = half-width chroma, …) */
+  int  pixelHeight[MaxChannelCount];  /* vertical subsampling factor */
+  FrameLayout() : channelCount(0), stride{}, pixelWidth{}, pixelHeight{} {}
+};
+
+
 
 #if  (MaskThreshold>0)
 #define  MaskThresholdSign  (+1)
@@ -128,7 +139,8 @@ struct InpaintDataStruct
   double  LumaRadiusX, LumaRadiusY, ChromaRadiusX, ChromaRadiusY, Sharpness;  /* Different X/Y-radi will give an ellipse (due to PAR) */
   bool  ChromaTensor;
   /* Color space dependent values */
-  int  PixelType, Width, Height, ChromaPixelWidth, ChromaPixelHeight, LumaStride, ChromaStride, ChromaChannelCount, MaskPixelType, MaskStride, MaskChannelNo;
+  int  PixelType, Width, Height, ChromaPixelWidth, ChromaPixelHeight, ChromaChannelCount, MaskPixelType, MaskChannelNo;
+  FrameLayout  srcLayout, maskLayout;
   bool  FlipMask;
   bool  isYUV;             /* (PixelType & AVS_CS_YUV) != 0  — isolate API-specific check here for portability */
   bool  isChromaSubsampled; /* ChromaPixelWidth > 1 && ChromaPixelHeight > 1 */
@@ -159,7 +171,7 @@ struct InpaintDataStruct
     LumaRadiusX(0.0), LumaRadiusY(0.0), ChromaRadiusX(0.0), ChromaRadiusY(0.0), Sharpness(0.0),
     ChromaTensor(false),
     PixelType(0), Width(0), Height(0), ChromaPixelWidth(0), ChromaPixelHeight(0),
-    LumaStride(0), ChromaStride(0), ChromaChannelCount(0), MaskPixelType(0), MaskStride(0), MaskChannelNo(0),
+    ChromaChannelCount(0), MaskPixelType(0), MaskChannelNo(0),
     FlipMask(false),
     isYUV(false), isChromaSubsampled(false),
     LumaPreBlurXKernel(nullptr), LumaPreBlurYKernel(nullptr),
@@ -196,19 +208,21 @@ struct DoubleByte
 /* Structure for deblending - with pre-computed data for static logo */
 struct DeblendDataStruct
 {
-  int  PixelType, Width, Height, Stride[MaxChannelCount], PixelWidth[MaxChannelCount], PixelHeight[MaxChannelCount];
+  int  PixelType, Width, Height;
+  FrameLayout  layout;
   /* Static logo */
   std::array<std::vector<DoubleByte>, MaxChannelCount>  StaticLogoDataChannels;
   std::array<std::vector<uint8_t>, MaxChannelCount>         StaticAlphaDataChannels;
   /* Dynamic logo */
   AVS_Clip * LogoClip, * AlphaClip;
-  int  LogoPixelType, AlphaPixelType, LogoFrameCount, AlphaFrameCount, LogoStride[MaxChannelCount], AlphaStride;
+  int  LogoPixelType, AlphaPixelType, LogoFrameCount, AlphaFrameCount, AlphaStride;
+  FrameLayout  logoLayout;
   bool  FlipAlpha;
   /* Is static? Check (LogoClip)     Separate alpha clip? Check (AlphaClip) */
   DeblendDataStruct() :
-    PixelType(0), Width(0), Height(0), Stride{}, PixelWidth{}, PixelHeight{},
+    PixelType(0), Width(0), Height(0), layout(),
     LogoClip(nullptr), AlphaClip(nullptr),
-    LogoPixelType(0), AlphaPixelType(0), LogoFrameCount(0), AlphaFrameCount(0), LogoStride{}, AlphaStride(0),
+    LogoPixelType(0), AlphaPixelType(0), LogoFrameCount(0), AlphaFrameCount(0), AlphaStride(0), logoLayout(),
     FlipAlpha(false)
   {}
 };
@@ -217,7 +231,8 @@ struct DeblendDataStruct
 /* Some data for the distance function filter */
 struct DistanceFunctionDataStruct
 {
-  int  PixelType, LumaChannelNo, LumaStride, Width, Height;
+  int  PixelType, LumaChannelNo, Width, Height;
+  FrameLayout  layout;
   double  Scale, PixelWidth, PixelHeight;
   signed int  ScaleSign;
 };
@@ -246,6 +261,7 @@ void  AVSC_CC  DistanceFunction_Free(AVS_FilterInfo *  FilterInfo);
 
 /** Own functions **/
 /* Common functions */
+FrameLayout  FrameLayoutFromPixelType(int  PixelType);
 int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  uint8_t **  WritePtrs,  const uint8_t **  ReadPtrs,  int *  Pitch,  int *  Stride,  int *  PixelWidth,  int *  PixelHeight,  int  PixelType);
 bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight);
 bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<int> &  HeapVec);
@@ -302,7 +318,6 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   int  Steps, k;
   bool  ChromaTensor;
   double  PAR, Radius, Sharpness, PreBlur, PostBlur, ChromaWeight, PreBlurSize, PostBlurSize;
-  int  Stride[MaxChannelCount], ChromaPixelWidth[MaxChannelCount], ChromaPixelHeight[MaxChannelCount];
   const char * ErrorText;
   InpaintDataStruct * InpaintData;
 
@@ -324,7 +339,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   else if (MaskClip && !(avs_has_video(MaskVideoInfo) && MaskVideoInfo->num_frames && MaskVideoInfo->width && MaskVideoInfo->height))  ErrorText = "InpaintLogo: Mask clip has no video";
   else if (MaskClip && !((VideoInfo->width==MaskVideoInfo->width) && (VideoInfo->height==MaskVideoInfo->height)))  ErrorText = "InpaintLogo: Source and mask clip have different dimensions";
   else if (!(MaskClip || avs_is_rgb32(VideoInfo) || avs_is_planar_rgba(VideoInfo)))  ErrorText = "InpaintLogo: Mask is missing (needed if source clip is not RGB32 or RGBAP)";
-  else if (GetFramePointers(nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,VideoInfo->pixel_type)-(MaskClip?0:1)<=0)  ErrorText = "InpaintLogo internal error: Color space unrecognized";
+  else if (FrameLayoutFromPixelType(VideoInfo->pixel_type).channelCount-(MaskClip?0:1)<=0)  ErrorText = "InpaintLogo internal error: Color space unrecognized";
 
   /* Extract values from AVS_Value container, throw errors if necessary */
   Radius = avs_is_float(avs_array_elt(Args,2))?avs_as_float(avs_array_elt(Args,2)):5.0;
@@ -336,7 +351,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   PostBlur = avs_is_float(avs_array_elt(Args,5))?avs_as_float(avs_array_elt(Args,5)):4.0;
   if (PostBlur<0.0)  ErrorText = "InpaintLogo: Post-blurring scale may not be negative";
   ChromaWeight = avs_is_float(avs_array_elt(Args,6))?avs_as_float(avs_array_elt(Args,6)):0.0;
-  if (GetFramePointers(nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,VideoInfo->pixel_type)-1-(MaskClip?0:1)==0)  ChromaWeight = 0.0;  else  if (avs_is_rgb(VideoInfo))  ChromaWeight = 1.0-1.0/(GetFramePointers(nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,VideoInfo->pixel_type)-1-(MaskClip?0:1));
+  if (FrameLayoutFromPixelType(VideoInfo->pixel_type).channelCount-1-(MaskClip?0:1)==0)  ChromaWeight = 0.0;  else  if (avs_is_rgb(VideoInfo))  ChromaWeight = 1.0-1.0/(FrameLayoutFromPixelType(VideoInfo->pixel_type).channelCount-1-(MaskClip?0:1));
   if ((ChromaWeight<0.0) || (ChromaWeight>1.0))  ErrorText = "InpaintLogo: Chroma structure tensor weight must lie in the interval [0.0,1.0]";
   #if (!(defined(BlurStandardDeviation) && ((BlurStandardDeviation)!=0)))
   PreBlur = std::sqrt(2*PreBlur);
@@ -369,23 +384,21 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   if (!ErrorText)
   {
     /** Color space parameters **/
-    InpaintData->ChromaChannelCount = GetFramePointers(nullptr,nullptr,nullptr,nullptr,Stride,ChromaPixelWidth,ChromaPixelHeight,VideoInfo->pixel_type)-1-(MaskClip?0:1);
+    InpaintData->srcLayout = FrameLayoutFromPixelType(VideoInfo->pixel_type);
+    InpaintData->ChromaChannelCount = InpaintData->srcLayout.channelCount-1-(MaskClip?0:1);
     InpaintData->PixelType = VideoInfo->pixel_type;
     InpaintData->Width = VideoInfo->width;
     InpaintData->Height = VideoInfo->height;
-    InpaintData->LumaStride = Stride[0];
     /* If there is no chroma channel (Y8) all chroma values are set to zero */
     if (InpaintData->ChromaChannelCount)
     {
-      InpaintData->ChromaPixelWidth = ChromaPixelWidth[1];
-      InpaintData->ChromaPixelHeight = ChromaPixelHeight[1];
-      InpaintData->ChromaStride = Stride[1];
+      InpaintData->ChromaPixelWidth  = InpaintData->srcLayout.pixelWidth[1];
+      InpaintData->ChromaPixelHeight = InpaintData->srcLayout.pixelHeight[1];
     }
     else
     {
       InpaintData->ChromaPixelWidth = 0;
       InpaintData->ChromaPixelHeight = 0;
-      InpaintData->ChromaStride = 0;
     }
     InpaintData->isYUV             = (InpaintData->PixelType & AVS_CS_YUV) != 0;
     InpaintData->isChromaSubsampled = (InpaintData->ChromaPixelWidth > 1) && (InpaintData->ChromaPixelHeight > 1);
@@ -400,11 +413,10 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       InpaintData->MaskClip = nullptr;
       InpaintData->MaskFrameCount = 0;
     }
-    GetFramePointers(nullptr,nullptr,nullptr,nullptr,Stride,nullptr,nullptr,MaskVideoInfo->pixel_type);
+    InpaintData->maskLayout = FrameLayoutFromPixelType(MaskVideoInfo->pixel_type);
     InpaintData->MaskChannelNo = avs_is_yuv(MaskVideoInfo)?0:3; // y8 is yuv as well here; planar RGBA alpha is also channel 3
     // only packed RGB is upside-down, planar is not
     InpaintData->FlipMask = ((avs_is_rgb(VideoInfo) && !avs_is_planar(VideoInfo)) != (avs_is_rgb(MaskVideoInfo) && !avs_is_planar(MaskVideoInfo)));
-    InpaintData->MaskStride = Stride[InpaintData->MaskChannelNo];
     InpaintData->MaskPixelType = MaskVideoInfo->pixel_type;
     InpaintData->MaxSteps = (Steps>=0)?Steps:-1;
     /** user-specified values **/
@@ -683,8 +695,8 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   ChromaTensor = InpaintData->ChromaTensor;
   ChromaPixelWidth = InpaintData->ChromaPixelWidth;
   ChromaPixelHeight = InpaintData->ChromaPixelHeight;
-  LumaStride = InpaintData->LumaStride;
-  ChromaStride = InpaintData->ChromaStride;
+  LumaStride = InpaintData->srcLayout.stride[0];
+  ChromaStride = InpaintData->srcLayout.stride[1];
   ChromaChannelCount = InpaintData->ChromaChannelCount;
   const bool isYUV             = InpaintData->isYUV;
   const bool isChromaSubsampled = InpaintData->isChromaSubsampled;
@@ -763,7 +775,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   /* Prepare pointers */
   LumaPitch = FramePitch[0];
   ChromaPitch = FramePitch+1;
-  LumaData = FrameData[0]+LumaPitch*MaskData->OffsetY+MaskData->OffsetX*InpaintData->LumaStride;
+  LumaData = FrameData[0]+LumaPitch*MaskData->OffsetY+MaskData->OffsetX*LumaStride;
   for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)  ChromaDatas[ChannelNo] = FrameData[ChannelNo+1]+MaskData->OffsetY/ChromaPixelHeight*FramePitch[ChannelNo+1]+MaskData->OffsetX/ChromaPixelWidth*ChromaStride;
   /* Prepare blurred images */
   if (InpaintData->StaticMaskData)
@@ -927,7 +939,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   AVS_Clip * SrcClip, * LogoClip, * AlphaClip, * DestClip;
   const  AVS_VideoInfo * SrcVideoInfo, * LogoVideoInfo, * AlphaVideoInfo;
   AVS_VideoFrame * LogoFrame, * AlphaFrame;
-  int  LogoPixelWidth[MaxChannelCount], LogoPixelHeight[MaxChannelCount], AlphaStride[MaxChannelCount];
+  int  LogoPixelWidth[MaxChannelCount], LogoPixelHeight[MaxChannelCount];
   AVS_FilterInfo * FilterInfo;
   DeblendDataStruct * DeblendData = nullptr;
   int  ChannelCount, ChannelNo;
@@ -968,7 +980,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       DeblendData->AlphaFrameCount = AlphaVideoInfo?AlphaVideoInfo->num_frames:0;
       // only packed RGB is upside down, planar is not.
       DeblendData->FlipAlpha = AlphaVideoInfo ? ((avs_is_rgb(LogoVideoInfo) && !avs_is_planar(LogoVideoInfo)) != (avs_is_rgb(AlphaVideoInfo) && !avs_is_planar(AlphaVideoInfo))) : false;
-      GetFramePointers(nullptr,nullptr,nullptr,nullptr,DeblendData->Stride,DeblendData->PixelWidth,DeblendData->PixelHeight,SrcVideoInfo->pixel_type);
+      DeblendData->layout = FrameLayoutFromPixelType(SrcVideoInfo->pixel_type);
     }
     else  ErrorText = "Deblend: Could not allocate memory";
   }
@@ -1024,13 +1036,13 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   {
     if (!ErrorText)
     {
-      GetFramePointers(nullptr,nullptr,nullptr,nullptr,DeblendData->LogoStride,nullptr,nullptr,LogoVideoInfo->pixel_type);
+      DeblendData->logoLayout = FrameLayoutFromPixelType(LogoVideoInfo->pixel_type);
       if (AlphaClip)
       {
-        GetFramePointers(nullptr,nullptr,nullptr,nullptr,AlphaStride,nullptr,nullptr,AlphaVideoInfo->pixel_type);
-        DeblendData->AlphaStride = AlphaStride[avs_is_rgb32(AlphaVideoInfo)?3:0];
+        const FrameLayout  alphaLayout = FrameLayoutFromPixelType(AlphaVideoInfo->pixel_type);
+        DeblendData->AlphaStride = alphaLayout.stride[avs_is_rgb32(AlphaVideoInfo)?3:0];
       }
-      else  DeblendData->AlphaStride = DeblendData->LogoStride[3];  /* If this happens, LogoClip *must* be RGBA */
+      else  DeblendData->AlphaStride = DeblendData->logoLayout.stride[3];  /* If this happens, LogoClip *must* be RGBA */
       DeblendData->LogoClip = LogoClip;
       DeblendData->AlphaClip = AlphaClip;
     }
@@ -1067,7 +1079,8 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
 {
   DeblendDataStruct * DeblendData;
   AVS_VideoFrame * Frame;
-  int  ChannelCount, Width, Height, PixelType, FramePitch[MaxChannelCount], * FrameStride, * FramePixelWidth, * FramePixelHeight;
+  int  ChannelCount, Width, Height, PixelType, FramePitch[MaxChannelCount];
+  const int  * FrameStride, * FramePixelWidth, * FramePixelHeight;
   uint8_t * FrameData[MaxChannelCount], * AlphaData;
   int  ChannelNo;
 
@@ -1076,9 +1089,9 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
   PixelType = DeblendData->PixelType;
   Width = DeblendData->Width;
   Height = DeblendData->Height;
-  FrameStride = DeblendData->Stride;
-  FramePixelWidth = DeblendData->PixelWidth;
-  FramePixelHeight = DeblendData->PixelHeight;
+  FrameStride    = DeblendData->layout.stride;
+  FramePixelWidth  = DeblendData->layout.pixelWidth;
+  FramePixelHeight = DeblendData->layout.pixelHeight;
   Frame = avs_get_frame(FilterInfo->child,FrameNo);
   avs_make_writable(FilterInfo->env,&Frame);
   ChannelCount = GetFramePointers(Frame,FrameData,nullptr,FramePitch,nullptr,nullptr,nullptr,PixelType);
@@ -1104,8 +1117,10 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
 {
   DeblendDataStruct * DeblendData;
   AVS_VideoFrame * Frame, * LogoFrame, * AlphaFrame;
-  int  ChannelCount, PixelType, Width, Height, FramePitch[MaxChannelCount], * FrameStride, * FramePixelWidth, * FramePixelHeight;
-  int  LogoChannelCount, LogoPixelType, LogoFramePitch[MaxChannelCount], * LogoFrameStride;
+  int  ChannelCount, PixelType, Width, Height, FramePitch[MaxChannelCount];
+  const int  * FrameStride, * FramePixelWidth, * FramePixelHeight;
+  int  LogoChannelCount, LogoPixelType, LogoFramePitch[MaxChannelCount];
+  const int  * LogoFrameStride;
   int  AlphaChannelCount, AlphaPixelType, AlphaFramePitch[MaxChannelCount], AlphaPitch, AlphaStride;
   uint8_t * FrameData[MaxChannelCount];
   const  uint8_t * LogoFrameData[MaxChannelCount], * AlphaFrameData[MaxChannelCount], * AlphaData;
@@ -1117,10 +1132,10 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   PixelType = DeblendData->PixelType;
   Width = DeblendData->Width;
   Height = DeblendData->Height;
-  FrameStride = DeblendData->Stride;
-  FramePixelWidth = DeblendData->PixelWidth;
-  FramePixelHeight = DeblendData->PixelHeight;
-  LogoFrameStride = DeblendData->LogoStride;
+  FrameStride    = DeblendData->layout.stride;
+  FramePixelWidth  = DeblendData->layout.pixelWidth;
+  FramePixelHeight = DeblendData->layout.pixelHeight;
+  LogoFrameStride  = DeblendData->logoLayout.stride;
   AlphaStride = DeblendData->AlphaStride;
   Frame = avs_get_frame(FilterInfo->child,FrameNo);
   avs_make_writable(FilterInfo->env,&Frame);
@@ -1429,7 +1444,6 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
   AVS_Clip * DestClip;
   AVS_FilterInfo * FilterInfo;
   AVS_VideoInfo * VideoInfo;
-  int  Stride[MaxChannelCount];
   double  PAR, Scale;
   const char * ErrorText;
 
@@ -1460,8 +1474,7 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
     DistFcnData->LumaChannelNo = avs_is_rgb32(VideoInfo)?3:0;
     DistFcnData->Width = VideoInfo->width;
     DistFcnData->Height = VideoInfo->height;
-    GetFramePointers(nullptr,nullptr,nullptr,nullptr,Stride,nullptr,nullptr,DistFcnData->PixelType);
-    DistFcnData->LumaStride = Stride[DistFcnData->LumaChannelNo];
+    DistFcnData->layout = FrameLayoutFromPixelType(DistFcnData->PixelType);
     if (PAR>1.0)
     {
       DistFcnData->PixelWidth = 1.0;
@@ -1504,7 +1517,7 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
   DistFcnData = static_cast<DistanceFunctionDataStruct*>(FilterInfo->user_data);
   Width = DistFcnData->Width;
   Height = DistFcnData->Height;
-  Stride = DistFcnData->LumaStride;
+  Stride = DistFcnData->layout.stride[DistFcnData->LumaChannelNo];
   Scale = DistFcnData->Scale;
   ScaleSign = DistFcnData->ScaleSign;
   ErrorText = nullptr;
@@ -1597,70 +1610,107 @@ void  AVSC_CC  DistanceFunction_Free(AVS_FilterInfo *  FilterInfo)
 /****************************************************************
                       Common functions
  ****************************************************************/
+FrameLayout  FrameLayoutFromPixelType(int  PixelType)
+/* Returns the pixel-format-derived layout for the given AviSynth pixel_type constant.
+   channelCount == 0 signals an unsupported / unknown format.                          */
+{
+  FrameLayout  L;
+  switch (PixelType)
+  {
+    case AVS_CS_BGR24:   L.channelCount = 3;  break;
+    case AVS_CS_BGR32:   L.channelCount = 4;  break;
+    case AVS_CS_YUY2:    L.channelCount = 3;  break;
+    case AVS_CS_YV12:
+    case AVS_CS_I420:    L.channelCount = 3;  break;
+    case AVS_CS_YV16:    L.channelCount = 3;  break;
+    case AVS_CS_YV24:    L.channelCount = 3;  break;
+    case AVS_CS_Y8:      L.channelCount = 1;  break;
+    case AVS_CS_RGBP:    L.channelCount = 3;  break;
+    case AVS_CS_RGBAP:   L.channelCount = 4;  break;
+    default:             return L;  /* channelCount stays 0 */
+  }
+  /* stride: bytes between adjacent samples in the same row */
+  switch (PixelType)
+  {
+    case AVS_CS_BGR24:
+      for (int i=0 ; i<L.channelCount ; i++)  L.stride[i] = 3;
+    break;
+    case AVS_CS_BGR32:
+      for (int i=0 ; i<L.channelCount ; i++)  L.stride[i] = 4;
+    break;
+    case AVS_CS_YUY2:
+      L.stride[0] = 2;
+      for (int i=1 ; i<L.channelCount ; i++)  L.stride[i] = 4;
+    break;
+    case AVS_CS_YV12:
+    case AVS_CS_I420:
+    case AVS_CS_YV16:
+    case AVS_CS_YV24:
+    case AVS_CS_Y8:
+    case AVS_CS_RGBP:
+    case AVS_CS_RGBAP:
+      for (int i=0 ; i<L.channelCount ; i++)  L.stride[i] = 1;
+    break;
+  }
+  /* pixelWidth: horizontal subsampling factor */
+  switch (PixelType)
+  {
+    case AVS_CS_BGR24:
+    case AVS_CS_BGR32:
+    case AVS_CS_YV24:
+    case AVS_CS_Y8:
+    case AVS_CS_RGBP:
+    case AVS_CS_RGBAP:
+      for (int i=0 ; i<L.channelCount ; i++)  L.pixelWidth[i] = 1;
+    break;
+    case AVS_CS_YUY2:
+    case AVS_CS_YV12:
+    case AVS_CS_I420:
+    case AVS_CS_YV16:
+      L.pixelWidth[0] = 1;
+      for (int i=1 ; i<L.channelCount ; i++)  L.pixelWidth[i] = 2;
+    break;
+  }
+  /* pixelHeight: vertical subsampling factor */
+  switch (PixelType)
+  {
+    case AVS_CS_BGR24:
+    case AVS_CS_BGR32:
+    case AVS_CS_YUY2:
+    case AVS_CS_YV24:
+    case AVS_CS_YV16:
+    case AVS_CS_Y8:
+    case AVS_CS_RGBP:
+    case AVS_CS_RGBAP:
+      for (int i=0 ; i<L.channelCount ; i++)  L.pixelHeight[i] = 1;
+    break;
+    case AVS_CS_YV12:
+    case AVS_CS_I420:
+      L.pixelHeight[0] = 1;
+      for (int i=1 ; i<L.channelCount ; i++)  L.pixelHeight[i] = 2;
+    break;
+  }
+  return L;
+}
+
+
+
 int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  uint8_t **  WritePtrs,  const uint8_t **  ReadPtrs,  int *  Pitch,  int *  Stride,  int *  PixelWidth,  int *  PixelHeight,  int  PixelType)
 /* This functions stores some informations about a frame in the
    places given. If read/write pointers are requested and cannot be
    gathered (e.g. write pointers for a read-only frame), 0 is
    returned, otherwise the number of color channels.                */
 {
-  int  ChannelCount;
+  const FrameLayout  L = FrameLayoutFromPixelType(PixelType);
+  const int  ChannelCount = L.channelCount;
 
-  ChannelCount = MaxChannelCount;
+  if (!ChannelCount)  return  0;
   if (WritePtrs)  for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  WritePtrs[ChannelNo] = nullptr;
-  if (ReadPtrs)  for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  ReadPtrs[ChannelNo] = nullptr;
-  if (Pitch)  for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Pitch[ChannelNo] = 0;
-  if (Stride)  for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Stride[ChannelNo] = 0;
-  switch (PixelType)
-  {
-    case AVS_CS_BGR24:
-    case AVS_CS_YUY2:
-    case AVS_CS_YV12:
-    case AVS_CS_I420:
-    case AVS_CS_YV16:
-    case AVS_CS_YV24:
-      if (ChannelCount>3)  ChannelCount = 3;
-    break;
-    case AVS_CS_BGR32:
-      if (ChannelCount>4)  ChannelCount = 4;
-    break;
-    case AVS_CS_Y8:
-      if (ChannelCount > 1)  ChannelCount = 1;
-      break;
-    case AVS_CS_RGBP:
-      if (ChannelCount>3)  ChannelCount = 3;
-    break;
-    case AVS_CS_RGBAP:
-      if (ChannelCount>4)  ChannelCount = 4;
-    break;
-    default:
-      return  0;
-    break;
-  }
-  if (Stride)
-  {
-    switch (PixelType)
-    {
-      case AVS_CS_BGR24:
-        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Stride[ChannelNo] = 3;
-      break;
-      case AVS_CS_BGR32:
-        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Stride[ChannelNo] = 4;
-      break;
-      case AVS_CS_YUY2:
-        Stride[0] = 2;
-        for (int ChannelNo=1 ; ChannelNo<ChannelCount ; ChannelNo++)  Stride[ChannelNo] = 4;
-      break;
-      case AVS_CS_YV12:
-      case AVS_CS_I420:
-      case AVS_CS_YV16:
-      case AVS_CS_YV24:
-      case AVS_CS_Y8:
-      case AVS_CS_RGBP:
-      case AVS_CS_RGBAP:
-        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Stride[ChannelNo] = 1;
-      break;
-    }
-  }
+  if (ReadPtrs)   for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  ReadPtrs[ChannelNo] = nullptr;
+  if (Pitch)      for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Pitch[ChannelNo] = 0;
+  if (Stride)     for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Stride[ChannelNo] = L.stride[ChannelNo];
+  if (PixelWidth) for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelWidth[ChannelNo] = L.pixelWidth[ChannelNo];
+  if (PixelHeight)for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelHeight[ChannelNo] = L.pixelHeight[ChannelNo];
   if (Pitch)
   {
     switch (PixelType)
@@ -1686,48 +1736,6 @@ int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  uint8_t **  WritePtrs,  con
         if (ChannelCount>1)  Pitch[1] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_G);
         if (ChannelCount>2)  Pitch[2] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_R);
         if (ChannelCount>3)  Pitch[3] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_A);
-      break;
-    }
-  }
-  if (PixelWidth)
-  {
-    switch (PixelType)
-    {
-      case AVS_CS_BGR24:
-      case AVS_CS_BGR32:
-      case AVS_CS_YV24:
-      case AVS_CS_Y8:
-      case AVS_CS_RGBP:
-      case AVS_CS_RGBAP:
-        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelWidth[ChannelNo] = 1;
-      break;
-      case AVS_CS_YUY2:
-      case AVS_CS_YV12:
-      case AVS_CS_I420:
-      case AVS_CS_YV16:
-        PixelWidth[0] = 1;
-        for (int ChannelNo=1 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelWidth[ChannelNo] = 2;
-      break;
-    }
-  }
-  if (PixelHeight)
-  {
-    switch (PixelType)
-    {
-      case AVS_CS_BGR24:
-      case AVS_CS_BGR32:
-      case AVS_CS_YUY2:
-      case AVS_CS_YV24:
-      case AVS_CS_YV16:
-      case AVS_CS_Y8:
-      case AVS_CS_RGBP:
-      case AVS_CS_RGBAP:
-        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelHeight[ChannelNo] = 1;
-      break;
-      case AVS_CS_YV12:
-      case AVS_CS_I420:
-        PixelHeight[0] = 1;
-        for (int ChannelNo=1 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelHeight[ChannelNo] = 2;
       break;
     }
   }
@@ -1979,7 +1987,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
   catch (std::bad_alloc&)  { delete MaskData;  return  InpaintMaskResult::MemoryError; }
   DistFcn = DistFcnVec.data();
   Pitch = FramePitch[InpaintData->MaskChannelNo];
-  Stride = InpaintData->MaskStride;
+  Stride = InpaintData->maskLayout.stride[InpaintData->MaskChannelNo];
   MaskSize = 0;
   DataPtr = FrameData[InpaintData->MaskChannelNo];
   u = DistFcn;
