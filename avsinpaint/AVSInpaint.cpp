@@ -130,6 +130,8 @@ struct InpaintDataStruct
   /* Color space dependent values */
   int  PixelType, Width, Height, ChromaPixelWidth, ChromaPixelHeight, LumaStride, ChromaStride, ChromaChannelCount, MaskPixelType, MaskStride, MaskChannelNo;
   bool  FlipMask;
+  bool  isYUV;             /* (PixelType & AVS_CS_YUV) != 0  — isolate API-specific check here for portability */
+  bool  isChromaSubsampled; /* ChromaPixelWidth > 1 && ChromaPixelHeight > 1 */
   /* ChromaPixelWidth, ChromaPixelHeight -> chroma channel subsampling */
   /* Blurring stuff */
   double * LumaPreBlurXKernel, * LumaPreBlurYKernel, * ChromaPreBlurXKernel, * ChromaPreBlurYKernel;  /* (Preblurred data will be buffered later) */
@@ -159,6 +161,7 @@ struct InpaintDataStruct
     PixelType(0), Width(0), Height(0), ChromaPixelWidth(0), ChromaPixelHeight(0),
     LumaStride(0), ChromaStride(0), ChromaChannelCount(0), MaskPixelType(0), MaskStride(0), MaskChannelNo(0),
     FlipMask(false),
+    isYUV(false), isChromaSubsampled(false),
     LumaPreBlurXKernel(nullptr), LumaPreBlurYKernel(nullptr),
     ChromaPreBlurXKernel(nullptr), ChromaPreBlurYKernel(nullptr),
     Luma4LumaPostBlurXKernel(nullptr), Luma4LumaPostBlurYKernel(nullptr),
@@ -384,6 +387,8 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       InpaintData->ChromaPixelHeight = 0;
       InpaintData->ChromaStride = 0;
     }
+    InpaintData->isYUV             = (InpaintData->PixelType & AVS_CS_YUV) != 0;
+    InpaintData->isChromaSubsampled = (InpaintData->ChromaPixelWidth > 1) && (InpaintData->ChromaPixelHeight > 1);
     /* Parameters of mask clip: Only if mask is dynamic */
     if (!ErrorText && (MaskVideoInfo->num_frames>1))
     {
@@ -681,6 +686,8 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   LumaStride = InpaintData->LumaStride;
   ChromaStride = InpaintData->ChromaStride;
   ChromaChannelCount = InpaintData->ChromaChannelCount;
+  const bool isYUV             = InpaintData->isYUV;
+  const bool isChromaSubsampled = InpaintData->isChromaSubsampled;
   LumaPreBlurXKernel = InpaintData->LumaPreBlurXKernel;
   LumaPreBlurYKernel = InpaintData->LumaPreBlurYKernel;
   ChromaPreBlurXKernel = InpaintData->ChromaPreBlurXKernel;
@@ -809,7 +816,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
     if (Value<0.0)
     {
       #if (defined(InpaintFailError) && ((InpaintFailError)!=0))
-      ErrorText = (InpaintData->PixelType&AVS_CS_YUV)?"InpaintLogo internal error: inpainting luma pixel failed":"InpaintLogo internal error: inpainting first color channel pixel failed";
+      ErrorText = isYUV?"InpaintLogo internal error: inpainting luma pixel failed":"InpaintLogo internal error: inpainting first color channel pixel failed";
       break;
       #else
       Value = 1.0*LumaData[LumaPitch*y+x*LumaStride];
@@ -845,18 +852,18 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
         {
           /* When inpainting fails on a subsampled channel, then the mask (almost certainly) contains to small holes (not covered by chroma resolution). If otherwise, we have a serious problem with our code (as above in the luma case). */
           #if (defined(InpaintFailError) && ((InpaintFailError)!=0) && defined(InpaintChromaFailError) && ((InpaintChromaFailError)!=0))
-          ErrorText = ((InpaintData->PixelType&&AVS_CS_YUV)&&(ChromaPixelWidth-1)&&(ChromaPixelHeight-1))?"InpaintLogo: inpainting chroma pixel failed (maybe mask contains a small hole not resolved by chroma subsampling, or internal error)":"InpaintLogo internal error: inpainting higher color channel pixel failed";
+          ErrorText = (isYUV && isChromaSubsampled)?"InpaintLogo: inpainting chroma pixel failed (maybe mask contains a small hole not resolved by chroma subsampling, or internal error)":"InpaintLogo internal error: inpainting higher color channel pixel failed";
           break;
           #else
           #if (defined(InpaintChromaFailError) && ((InpaintChromaFailError)!=0))
-          if ((InpaintData->PixelType&AVS_CS_YUV)&&(ChromaPixelWidth-1)&&(ChromaPixelHeight-1))
+          if (isYUV && isChromaSubsampled)
           {
             ErrorText = "InpaintLogo: inpainting chroma pixel failed (maybe mask contains a small hole not resolved by chroma subsampling, or internal error)";
             break;
           }
           else
           #elif (defined(InpaintFailError) && ((InpaintFailError)!=0))
-          if (!((InpaintData->PixelType&AVS_CS_YUV)&&(ChromaPixelWidth-1)&&(ChromaPixelHeight-1)))
+          if (!(isYUV && isChromaSubsampled))
           {
             ErrorText = "InpaintLogo internal error: inpainting higher color channel pixel failed";
             break;
