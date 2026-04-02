@@ -81,14 +81,18 @@ enum class InpaintMaskResult : int
 constexpr int  MaxChannelCount  = 4;  /* Maximal number of color channels for all color spaces */
 
 
+/* Color family — API-agnostic equivalent of AVS_CS_YUV / AVS_CS_RGB bits, and VS4's VSColorFamily */
+enum class ColorFamily { Gray, YUV, RGB };
+
 /* Physical layout of a video frame: all information derivable from pixel format alone, independent of any API */
 struct FrameLayout
 {
-  int  channelCount;
-  int  stride[MaxChannelCount];       /* bytes between adjacent samples within a row (1 for planar, 2+ for packed) */
+  int          channelCount;
+  ColorFamily  colorFamily;
+  int  sampleStep[MaxChannelCount];   /* bytes between adjacent samples within a row (1 for planar, 2+ for packed) */
   int  pixelWidth[MaxChannelCount];   /* horizontal subsampling factor (1 = full-res, 2 = half-width chroma, …) */
   int  pixelHeight[MaxChannelCount];  /* vertical subsampling factor */
-  FrameLayout() : channelCount(0), stride{}, pixelWidth{}, pixelHeight{} {}
+  FrameLayout() : channelCount(0), colorFamily(ColorFamily::Gray), sampleStep{}, pixelWidth{}, pixelHeight{} {}
 };
 
 
@@ -262,7 +266,8 @@ void  AVSC_CC  DistanceFunction_Free(AVS_FilterInfo *  FilterInfo);
 /** Own functions **/
 /* Common functions */
 FrameLayout  FrameLayoutFromPixelType(int  PixelType);
-int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  uint8_t **  WritePtrs,  const uint8_t **  ReadPtrs,  int *  Pitch,  int *  Stride,  int *  PixelWidth,  int *  PixelHeight,  int  PixelType);
+bool  AvsGetFramePlanes(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  uint8_t **  Planes,  int *  Pitch);
+bool  AvsGetFramePlanesRO(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  const uint8_t **  Planes,  int *  Pitch);
 bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight);
 bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<int> &  HeapVec);
 /* Inpaint tools */
@@ -695,8 +700,8 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   ChromaTensor = InpaintData->ChromaTensor;
   ChromaPixelWidth = InpaintData->ChromaPixelWidth;
   ChromaPixelHeight = InpaintData->ChromaPixelHeight;
-  LumaStride = InpaintData->srcLayout.stride[0];
-  ChromaStride = InpaintData->srcLayout.stride[1];
+  LumaStride = InpaintData->srcLayout.sampleStep[0];
+  ChromaStride = InpaintData->srcLayout.sampleStep[1];
   ChromaChannelCount = InpaintData->ChromaChannelCount;
   const bool isYUV             = InpaintData->isYUV;
   const bool isChromaSubsampled = InpaintData->isChromaSubsampled;
@@ -736,7 +741,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   ErrorText = nullptr;
   FrameData[0] = nullptr;
   if (Frame)  avs_make_writable(FilterInfo->env,&Frame);
-  if (Frame)  GetFramePointers(Frame,FrameData,nullptr,FramePitch,nullptr,nullptr,nullptr,InpaintData->PixelType);
+  if (Frame && !AvsGetFramePlanes(Frame,InpaintData->srcLayout,FrameData,FramePitch))  FrameData[0] = nullptr;
   if (!FrameData[0])  ErrorText = "InpaintLogo: Could not get pixel data pointers";
   /* Allocate temporary memory */
   for (ChannelNo=0 ; ChannelNo<MaxChannelCount-1 ; ChannelNo++)  GchiuChromas[ChannelNo] = nullptr;
@@ -1001,7 +1006,12 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     if (!ErrorText)
     {
       /* How many channels need to be processed (should be 3, or 4 if alpha channels is part of the logo) */
-      ChannelCount = GetFramePointers(LogoFrame,nullptr,nullptr,nullptr,nullptr,LogoPixelWidth,LogoPixelHeight,LogoVideoInfo->pixel_type)-(!AlphaClip);
+      {
+        const FrameLayout  logoFmt = FrameLayoutFromPixelType(LogoVideoInfo->pixel_type);
+        ChannelCount = AlphaClip ? logoFmt.channelCount      /* alpha from separate clip: all logo channels are color */
+                                 : logoFmt.channelCount - 1; /* alpha embedded in last logo channel: skip it */
+        for (int i=0 ; i<logoFmt.channelCount ; i++)  { LogoPixelWidth[i] = logoFmt.pixelWidth[i];  LogoPixelHeight[i] = logoFmt.pixelHeight[i]; }
+      }
       /* Memory for static logo data is allocated */
       try
       {
@@ -1040,9 +1050,9 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       if (AlphaClip)
       {
         const FrameLayout  alphaLayout = FrameLayoutFromPixelType(AlphaVideoInfo->pixel_type);
-        DeblendData->AlphaStride = alphaLayout.stride[avs_is_rgb32(AlphaVideoInfo)?3:0];
+        DeblendData->AlphaStride = alphaLayout.sampleStep[avs_is_rgb32(AlphaVideoInfo)?3:0];
       }
-      else  DeblendData->AlphaStride = DeblendData->logoLayout.stride[3];  /* If this happens, LogoClip *must* be RGBA */
+      else  DeblendData->AlphaStride = DeblendData->logoLayout.sampleStep[3];  /* If this happens, LogoClip *must* be RGBA */
       DeblendData->LogoClip = LogoClip;
       DeblendData->AlphaClip = AlphaClip;
     }
@@ -1089,13 +1099,13 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
   PixelType = DeblendData->PixelType;
   Width = DeblendData->Width;
   Height = DeblendData->Height;
-  FrameStride    = DeblendData->layout.stride;
+  FrameStride    = DeblendData->layout.sampleStep;
   FramePixelWidth  = DeblendData->layout.pixelWidth;
   FramePixelHeight = DeblendData->layout.pixelHeight;
   Frame = avs_get_frame(FilterInfo->child,FrameNo);
   avs_make_writable(FilterInfo->env,&Frame);
-  ChannelCount = GetFramePointers(Frame,FrameData,nullptr,FramePitch,nullptr,nullptr,nullptr,PixelType);
-  if (!ChannelCount)
+  ChannelCount = DeblendData->layout.channelCount;
+  if (!AvsGetFramePlanes(Frame,DeblendData->layout,FrameData,FramePitch))
   {
     FilterInfo->error = Frame?"Deblend: Could not get source data pointers":"Deblend: Could not get source frame";
     if (Frame)  avs_release_video_frame(Frame);
@@ -1132,23 +1142,24 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   PixelType = DeblendData->PixelType;
   Width = DeblendData->Width;
   Height = DeblendData->Height;
-  FrameStride    = DeblendData->layout.stride;
+  FrameStride    = DeblendData->layout.sampleStep;
   FramePixelWidth  = DeblendData->layout.pixelWidth;
   FramePixelHeight = DeblendData->layout.pixelHeight;
-  LogoFrameStride  = DeblendData->logoLayout.stride;
+  LogoFrameStride  = DeblendData->logoLayout.sampleStep;
   AlphaStride = DeblendData->AlphaStride;
   Frame = avs_get_frame(FilterInfo->child,FrameNo);
   avs_make_writable(FilterInfo->env,&Frame);
-  ChannelCount = GetFramePointers(Frame,FrameData,nullptr,FramePitch,nullptr,nullptr,nullptr,PixelType);
+  ChannelCount = AvsGetFramePlanes(Frame,DeblendData->layout,FrameData,FramePitch) ? DeblendData->layout.channelCount : 0;
   LogoPixelType = DeblendData->LogoPixelType;
   LogoFrame = avs_get_frame(DeblendData->LogoClip,(FrameNo<DeblendData->LogoFrameCount)?FrameNo:(DeblendData->LogoFrameCount-1));
-  LogoChannelCount = GetFramePointers(LogoFrame,nullptr,LogoFrameData,LogoFramePitch,nullptr,nullptr,nullptr,LogoPixelType);
+  LogoChannelCount = AvsGetFramePlanesRO(LogoFrame,DeblendData->logoLayout,LogoFrameData,LogoFramePitch) ? DeblendData->logoLayout.channelCount : 0;
   /* Maybe we need the alpha frame, maybe it's part of the logo (rgbA) */
   if (DeblendData->AlphaClip)
   {
     AlphaPixelType = DeblendData->AlphaPixelType;
     AlphaFrame = avs_get_frame(DeblendData->AlphaClip,(FrameNo<DeblendData->AlphaFrameCount)?FrameNo:(DeblendData->AlphaFrameCount-1));
-    AlphaChannelCount = GetFramePointers(AlphaFrame,nullptr,AlphaFrameData,AlphaFramePitch,nullptr,nullptr,nullptr,AlphaPixelType);
+    const FrameLayout  alphaFmt = FrameLayoutFromPixelType(AlphaPixelType);
+    AlphaChannelCount = AvsGetFramePlanesRO(AlphaFrame,alphaFmt,AlphaFrameData,AlphaFramePitch) ? alphaFmt.channelCount : 0;
   }
   else
   {
@@ -1517,14 +1528,14 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
   DistFcnData = static_cast<DistanceFunctionDataStruct*>(FilterInfo->user_data);
   Width = DistFcnData->Width;
   Height = DistFcnData->Height;
-  Stride = DistFcnData->layout.stride[DistFcnData->LumaChannelNo];
+  Stride = DistFcnData->layout.sampleStep[DistFcnData->LumaChannelNo];
   Scale = DistFcnData->Scale;
   ScaleSign = DistFcnData->ScaleSign;
   ErrorText = nullptr;
   Frame = avs_get_frame(FilterInfo->child,FrameNo);
   if (Frame)  avs_make_writable(FilterInfo->env,&Frame);
   FrameData[DistFcnData->LumaChannelNo] = nullptr;
-  if (Frame)  GetFramePointers(Frame,FrameData,nullptr,FramePitch,nullptr,nullptr,nullptr,DistFcnData->PixelType);
+  if (Frame)  AvsGetFramePlanes(Frame,DistFcnData->layout,FrameData,FramePitch);
   Pitch = FramePitch[DistFcnData->LumaChannelNo];
   if (FrameData[DistFcnData->LumaChannelNo] && (Scale==0.0))
   /* If scale is zero, we simply make the image binary and run away */
@@ -1617,30 +1628,30 @@ FrameLayout  FrameLayoutFromPixelType(int  PixelType)
   FrameLayout  L;
   switch (PixelType)
   {
-    case AVS_CS_BGR24:   L.channelCount = 3;  break;
-    case AVS_CS_BGR32:   L.channelCount = 4;  break;
-    case AVS_CS_YUY2:    L.channelCount = 3;  break;
+    case AVS_CS_BGR24:   L.channelCount = 3;  L.colorFamily = ColorFamily::RGB;  break;
+    case AVS_CS_BGR32:   L.channelCount = 4;  L.colorFamily = ColorFamily::RGB;  break;
+    case AVS_CS_YUY2:    L.channelCount = 3;  L.colorFamily = ColorFamily::YUV;  break;
     case AVS_CS_YV12:
-    case AVS_CS_I420:    L.channelCount = 3;  break;
-    case AVS_CS_YV16:    L.channelCount = 3;  break;
-    case AVS_CS_YV24:    L.channelCount = 3;  break;
-    case AVS_CS_Y8:      L.channelCount = 1;  break;
-    case AVS_CS_RGBP:    L.channelCount = 3;  break;
-    case AVS_CS_RGBAP:   L.channelCount = 4;  break;
+    case AVS_CS_I420:    L.channelCount = 3;  L.colorFamily = ColorFamily::YUV;  break;
+    case AVS_CS_YV16:    L.channelCount = 3;  L.colorFamily = ColorFamily::YUV;  break;
+    case AVS_CS_YV24:    L.channelCount = 3;  L.colorFamily = ColorFamily::YUV;  break;
+    case AVS_CS_Y8:      L.channelCount = 1;  L.colorFamily = ColorFamily::Gray; break;
+    case AVS_CS_RGBP:    L.channelCount = 3;  L.colorFamily = ColorFamily::RGB;  break;
+    case AVS_CS_RGBAP:   L.channelCount = 4;  L.colorFamily = ColorFamily::RGB;  break;
     default:             return L;  /* channelCount stays 0 */
   }
-  /* stride: bytes between adjacent samples in the same row */
+  /* sampleStep: bytes between adjacent samples in the same row */
   switch (PixelType)
   {
     case AVS_CS_BGR24:
-      for (int i=0 ; i<L.channelCount ; i++)  L.stride[i] = 3;
+      for (int i=0 ; i<L.channelCount ; i++)  L.sampleStep[i] = 3;
     break;
     case AVS_CS_BGR32:
-      for (int i=0 ; i<L.channelCount ; i++)  L.stride[i] = 4;
+      for (int i=0 ; i<L.channelCount ; i++)  L.sampleStep[i] = 4;
     break;
     case AVS_CS_YUY2:
-      L.stride[0] = 2;
-      for (int i=1 ; i<L.channelCount ; i++)  L.stride[i] = 4;
+      L.sampleStep[0] = 2;
+      for (int i=1 ; i<L.channelCount ; i++)  L.sampleStep[i] = 4;
     break;
     case AVS_CS_YV12:
     case AVS_CS_I420:
@@ -1649,7 +1660,7 @@ FrameLayout  FrameLayoutFromPixelType(int  PixelType)
     case AVS_CS_Y8:
     case AVS_CS_RGBP:
     case AVS_CS_RGBAP:
-      for (int i=0 ; i<L.channelCount ; i++)  L.stride[i] = 1;
+      for (int i=0 ; i<L.channelCount ; i++)  L.sampleStep[i] = 1;
     break;
   }
   /* pixelWidth: horizontal subsampling factor */
@@ -1695,117 +1706,94 @@ FrameLayout  FrameLayoutFromPixelType(int  PixelType)
 
 
 
-int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  uint8_t **  WritePtrs,  const uint8_t **  ReadPtrs,  int *  Pitch,  int *  Stride,  int *  PixelWidth,  int *  PixelHeight,  int  PixelType)
-/* This functions stores some informations about a frame in the
-   places given. If read/write pointers are requested and cannot be
-   gathered (e.g. write pointers for a read-only frame), 0 is
-   returned, otherwise the number of color channels.                */
+/* Internal helper shared by AvsGetFramePlanes and AvsGetFramePlanesRO:
+   fills Pitch[] for the given frame and layout.                        */
+static void  AvsFillPitch(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  int *  Pitch)
 {
-  const FrameLayout  L = FrameLayoutFromPixelType(PixelType);
-  const int  ChannelCount = L.channelCount;
+  for (int i=0 ; i<L.channelCount ; i++)  Pitch[i] = 0;
+  if (L.sampleStep[0] > 1)  /* packed format: all channels share the same row-pitch */
+  {
+    Pitch[0] = avs_get_pitch_p(Frame, AVS_DEFAULT_PLANE);
+    for (int i=1 ; i<L.channelCount ; i++)  Pitch[i] = Pitch[0];
+  }
+  else if (L.colorFamily == ColorFamily::YUV || L.colorFamily == ColorFamily::Gray)
+  {
+    Pitch[0] = avs_get_pitch_p(Frame, AVS_PLANAR_Y);
+    if (L.channelCount > 1)  Pitch[1] = avs_get_pitch_p(Frame, AVS_PLANAR_U);
+    if (L.channelCount > 2)  Pitch[2] = avs_get_pitch_p(Frame, AVS_PLANAR_V);
+  }
+  else  /* planar RGB / RGBA */
+  {
+    Pitch[0] = avs_get_pitch_p(Frame, AVS_PLANAR_B);
+    if (L.channelCount > 1)  Pitch[1] = avs_get_pitch_p(Frame, AVS_PLANAR_G);
+    if (L.channelCount > 2)  Pitch[2] = avs_get_pitch_p(Frame, AVS_PLANAR_R);
+    if (L.channelCount > 3)  Pitch[3] = avs_get_pitch_p(Frame, AVS_PLANAR_A);
+  }
+}
 
-  if (!ChannelCount)  return  0;
-  if (WritePtrs)  for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  WritePtrs[ChannelNo] = nullptr;
-  if (ReadPtrs)   for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  ReadPtrs[ChannelNo] = nullptr;
-  if (Pitch)      for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Pitch[ChannelNo] = 0;
-  if (Stride)     for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Stride[ChannelNo] = L.stride[ChannelNo];
-  if (PixelWidth) for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelWidth[ChannelNo] = L.pixelWidth[ChannelNo];
-  if (PixelHeight)for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  PixelHeight[ChannelNo] = L.pixelHeight[ChannelNo];
-  if (Pitch)
+
+bool  AvsGetFramePlanes(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  uint8_t **  Planes,  int *  Pitch)
+/* Obtain write-accessible plane pointers and row-pitches for Frame.
+   Returns false if Frame is null or any pointer cannot be obtained.   */
+{
+  if (!Frame || !L.channelCount)  return  false;
+  for (int i=0 ; i<L.channelCount ; i++)  Planes[i] = nullptr;
+  AvsFillPitch(Frame, L, Pitch);
+  if (L.sampleStep[0] > 1)  /* packed */
   {
-    switch (PixelType)
-    {
-      case AVS_CS_BGR24:
-      case AVS_CS_BGR32:
-      case AVS_CS_YUY2:
-        Pitch[0] = avs_get_pitch_p(VideoFrame, AVS_DEFAULT_PLANE);
-        for (int ChannelNo=1 ; ChannelNo<ChannelCount ; ChannelNo++)  Pitch[ChannelNo] = Pitch[0];
-      break;
-      case AVS_CS_YV12:
-      case AVS_CS_I420:
-      case AVS_CS_YV16:
-      case AVS_CS_YV24:
-      case AVS_CS_Y8:
-        Pitch[0] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_Y);
-        if (ChannelCount>1)  Pitch[1] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_U);
-        if (ChannelCount>2)  Pitch[2] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_V);
-      break;
-      case AVS_CS_RGBP:
-      case AVS_CS_RGBAP:
-        Pitch[0] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_B);
-        if (ChannelCount>1)  Pitch[1] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_G);
-        if (ChannelCount>2)  Pitch[2] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_R);
-        if (ChannelCount>3)  Pitch[3] = avs_get_pitch_p(VideoFrame,AVS_PLANAR_A);
-      break;
-    }
+    Planes[0] = avs_get_write_ptr_p(Frame, AVS_DEFAULT_PLANE);
+    if (!Planes[0])  return  false;
+    for (int i=1 ; i<L.channelCount ; i++)  Planes[i] = Planes[i-1]+1;
+    if (L.colorFamily == ColorFamily::YUV && L.channelCount > 2)  Planes[2]++;  /* YUY2: V is 2 bytes after U */
   }
-  if (ReadPtrs)
+  else if (L.colorFamily == ColorFamily::YUV || L.colorFamily == ColorFamily::Gray)
   {
-    if (!VideoFrame)  return  0;
-    switch (PixelType)
-    {
-      case AVS_CS_BGR24:
-      case AVS_CS_BGR32:
-      case AVS_CS_YUY2:
-        ReadPtrs[0] = avs_get_read_ptr_p(VideoFrame, AVS_DEFAULT_PLANE);
-        if (!ReadPtrs[0])  return  0;
-        for (int ChannelNo=1 ; ChannelNo<ChannelCount ; ChannelNo++)  ReadPtrs[ChannelNo] = ReadPtrs[ChannelNo-1]+1;
-        if ((PixelType==AVS_CS_YUY2) && (ChannelCount>2))  ReadPtrs[2]++;
-      break;
-      case AVS_CS_YV12:
-      case AVS_CS_I420:
-      case AVS_CS_YV24:
-      case AVS_CS_YV16:
-      case AVS_CS_Y8:
-        ReadPtrs[0] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_Y);
-        if (ChannelCount>1)  ReadPtrs[1] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_U);
-        if (ChannelCount>2)  ReadPtrs[2] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_V);
-        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (!ReadPtrs[ChannelNo])  return 0;
-      break;
-      case AVS_CS_RGBP:
-      case AVS_CS_RGBAP:
-        ReadPtrs[0] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_B);
-        if (ChannelCount>1)  ReadPtrs[1] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_G);
-        if (ChannelCount>2)  ReadPtrs[2] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_R);
-        if (ChannelCount>3)  ReadPtrs[3] = avs_get_read_ptr_p(VideoFrame,AVS_PLANAR_A);
-        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (!ReadPtrs[ChannelNo])  return 0;
-      break;
-    }
+    Planes[0] = avs_get_write_ptr_p(Frame, AVS_PLANAR_Y);
+    if (L.channelCount > 1)  Planes[1] = avs_get_write_ptr_p(Frame, AVS_PLANAR_U);
+    if (L.channelCount > 2)  Planes[2] = avs_get_write_ptr_p(Frame, AVS_PLANAR_V);
+    for (int i=0 ; i<L.channelCount ; i++)  if (!Planes[i])  return  false;
   }
-  if (WritePtrs)
+  else  /* planar RGB / RGBA */
   {
-    if (!VideoFrame)  return  0;
-    switch (PixelType)
-    {
-      case AVS_CS_BGR24:
-      case AVS_CS_BGR32:
-      case AVS_CS_YUY2:
-        WritePtrs[0] = avs_get_write_ptr_p(VideoFrame, AVS_DEFAULT_PLANE);
-        if (!WritePtrs[0])  return  0;
-        for (int ChannelNo=1 ; ChannelNo<ChannelCount ; ChannelNo++)  WritePtrs[ChannelNo] = WritePtrs[ChannelNo-1]+1;
-        if ((PixelType==AVS_CS_YUY2) && (ChannelCount>2))  WritePtrs[2]++;
-      break;
-      case AVS_CS_YV12:
-      case AVS_CS_I420:
-      case AVS_CS_YV24:
-      case AVS_CS_YV16:
-      case AVS_CS_Y8:
-        WritePtrs[0] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_Y);
-        if (ChannelCount>1)  WritePtrs[1] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_U);
-        if (ChannelCount>2)  WritePtrs[2] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_V);
-        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (!WritePtrs[ChannelNo])  return 0;
-      break;
-      case AVS_CS_RGBP:
-      case AVS_CS_RGBAP:
-        WritePtrs[0] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_B);
-        if (ChannelCount>1)  WritePtrs[1] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_G);
-        if (ChannelCount>2)  WritePtrs[2] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_R);
-        if (ChannelCount>3)  WritePtrs[3] = avs_get_write_ptr_p(VideoFrame,AVS_PLANAR_A);
-        for (int ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  if (!WritePtrs[ChannelNo])  return 0;
-      break;
-    }
+    Planes[0] = avs_get_write_ptr_p(Frame, AVS_PLANAR_B);
+    if (L.channelCount > 1)  Planes[1] = avs_get_write_ptr_p(Frame, AVS_PLANAR_G);
+    if (L.channelCount > 2)  Planes[2] = avs_get_write_ptr_p(Frame, AVS_PLANAR_R);
+    if (L.channelCount > 3)  Planes[3] = avs_get_write_ptr_p(Frame, AVS_PLANAR_A);
+    for (int i=0 ; i<L.channelCount ; i++)  if (!Planes[i])  return  false;
   }
-  return  ChannelCount;
+  return  true;
+}
+
+
+bool  AvsGetFramePlanesRO(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  const uint8_t **  Planes,  int *  Pitch)
+/* Read-only variant of AvsGetFramePlanes.                             */
+{
+  if (!Frame || !L.channelCount)  return  false;
+  for (int i=0 ; i<L.channelCount ; i++)  Planes[i] = nullptr;
+  AvsFillPitch(Frame, L, Pitch);
+  if (L.sampleStep[0] > 1)  /* packed */
+  {
+    Planes[0] = avs_get_read_ptr_p(Frame, AVS_DEFAULT_PLANE);
+    if (!Planes[0])  return  false;
+    for (int i=1 ; i<L.channelCount ; i++)  Planes[i] = Planes[i-1]+1;
+    if (L.colorFamily == ColorFamily::YUV && L.channelCount > 2)  Planes[2]++;  /* YUY2: V is 2 bytes after U */
+  }
+  else if (L.colorFamily == ColorFamily::YUV || L.colorFamily == ColorFamily::Gray)
+  {
+    Planes[0] = avs_get_read_ptr_p(Frame, AVS_PLANAR_Y);
+    if (L.channelCount > 1)  Planes[1] = avs_get_read_ptr_p(Frame, AVS_PLANAR_U);
+    if (L.channelCount > 2)  Planes[2] = avs_get_read_ptr_p(Frame, AVS_PLANAR_V);
+    for (int i=0 ; i<L.channelCount ; i++)  if (!Planes[i])  return  false;
+  }
+  else  /* planar RGB / RGBA */
+  {
+    Planes[0] = avs_get_read_ptr_p(Frame, AVS_PLANAR_B);
+    if (L.channelCount > 1)  Planes[1] = avs_get_read_ptr_p(Frame, AVS_PLANAR_G);
+    if (L.channelCount > 2)  Planes[2] = avs_get_read_ptr_p(Frame, AVS_PLANAR_R);
+    if (L.channelCount > 3)  Planes[3] = avs_get_read_ptr_p(Frame, AVS_PLANAR_A);
+    for (int i=0 ; i<L.channelCount ; i++)  if (!Planes[i])  return  false;
+  }
+  return  true;
 }
 
 
@@ -1976,7 +1964,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
     MaskData = nullptr;
     *MaskDataPtr = nullptr;
   }
-  if (!(Frame && GetFramePointers(Frame,nullptr,FrameData,FramePitch,nullptr,nullptr,nullptr,InpaintData->MaskPixelType) && FrameData[0]))
+  if (!(Frame && AvsGetFramePlanesRO(Frame,InpaintData->maskLayout,FrameData,FramePitch) && FrameData[0]))
     return  Frame?InpaintMaskResult::FrameError:InpaintMaskResult::NoMask;
   MaskData = new (std::nothrow) InpaintMaskDataStruct;
   if (!MaskData)  return  InpaintMaskResult::MemoryError;
@@ -1987,7 +1975,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
   catch (std::bad_alloc&)  { delete MaskData;  return  InpaintMaskResult::MemoryError; }
   DistFcn = DistFcnVec.data();
   Pitch = FramePitch[InpaintData->MaskChannelNo];
-  Stride = InpaintData->maskLayout.stride[InpaintData->MaskChannelNo];
+  Stride = InpaintData->maskLayout.sampleStep[InpaintData->MaskChannelNo];
   MaskSize = 0;
   DataPtr = FrameData[InpaintData->MaskChannelNo];
   u = DistFcn;
@@ -2542,20 +2530,22 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDat
   const  uint8_t * LogoData[MaxChannelCount], * AlphaData[MaxChannelCount], * SrcData, * AlphaData0;
   uint8_t * AlphaDestData;
   DoubleByte * DestData;
-  int  LogoPitch[MaxChannelCount], LogoStride[MaxChannelCount], LogoPixelWidth[MaxChannelCount], LogoPixelHeight[MaxChannelCount], AlphaPitch[MaxChannelCount], AlphaStride[MaxChannelCount], AlphaPitch0, AlphaStride0;
+  int  LogoPitch[MaxChannelCount], AlphaPitch[MaxChannelCount], AlphaPitch0, AlphaStride0;
   int  ChannelNo, ChannelCount, Width, Height, x, y, x2, y2, Alpha, Logo;
 
   Width = LogoVideoInfo->width;
   Height = LogoVideoInfo->height;
-  ChannelCount = GetFramePointers(LogoFrame,nullptr,LogoData,LogoPitch,LogoStride,LogoPixelWidth,LogoPixelHeight,LogoVideoInfo->pixel_type);
-  /* If LogoFrame is not RGBA, AlphaFrame must be supplied! */
+  const FrameLayout  logoFmt = FrameLayoutFromPixelType(LogoVideoInfo->pixel_type);
+  ChannelCount = logoFmt.channelCount;
   if ((!ChannelCount) || ((ChannelCount<4) && (!AlphaFrame)))  return  -1;
+  if (!AvsGetFramePlanesRO(LogoFrame, logoFmt, LogoData, LogoPitch))  return  -1;
   if (AlphaFrame)
   {
-    if (!GetFramePointers(AlphaFrame,nullptr,AlphaData,AlphaPitch,AlphaStride,nullptr,nullptr,AlphaVideoInfo->pixel_type))  return  -1;
+    const FrameLayout  alphaFmt = FrameLayoutFromPixelType(AlphaVideoInfo->pixel_type);
+    if (!AvsGetFramePlanesRO(AlphaFrame, alphaFmt, AlphaData, AlphaPitch))  return  -1;
     AlphaData0 = AlphaData[0];
     AlphaPitch0 = AlphaPitch[0];
-    AlphaStride0 = AlphaStride[0];
+    AlphaStride0 = alphaFmt.sampleStep[0];
     if (avs_is_rgb32(AlphaVideoInfo))  AlphaData0 += 3;
     if (!avs_is_rgb(LogoVideoInfo) ^ !avs_is_rgb32(AlphaVideoInfo))
     {
@@ -2568,31 +2558,34 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDat
     ChannelCount--;
     AlphaData0 = LogoData[ChannelCount];
     AlphaPitch0 = LogoPitch[ChannelCount];
-    AlphaStride0 = LogoStride[ChannelCount];
+    AlphaStride0 = logoFmt.sampleStep[ChannelCount];
   }
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
+    const int  PW = logoFmt.pixelWidth[ChannelNo];
+    const int  PH = logoFmt.pixelHeight[ChannelNo];
+    const int  ChStride = logoFmt.sampleStep[ChannelNo];
     DestData = LogoDataChannels[ChannelNo];
     if (!DestData)  continue;
     SrcData = LogoData[ChannelNo];
     AlphaDestData = AlphaDataChannels[ChannelNo];
-    for (y=0 ; y<Height/LogoPixelHeight[ChannelNo] ; y++)
+    for (y=0 ; y<Height/PH ; y++)
     {
-      for (x=0 ; x<Width/LogoPixelWidth[ChannelNo] ; x++)
+      for (x=0 ; x<Width/PW ; x++)
       {
         Alpha = 0;
-        for (y2=0 ; y2<LogoPixelHeight[ChannelNo] ; y2++)
+        for (y2=0 ; y2<PH ; y2++)
         {
-          for (x2=0 ; x2<LogoPixelWidth[ChannelNo] ; x2++)
+          for (x2=0 ; x2<PW ; x2++)
           {
-            Alpha += AlphaData0[AlphaPitch0*(LogoPixelHeight[ChannelNo]*y+y2)+(x2+x*LogoPixelWidth[ChannelNo])*AlphaStride0];
+            Alpha += AlphaData0[AlphaPitch0*(PH*y+y2)+(x2+x*PW)*AlphaStride0];
           }
         }
-        Alpha = static_cast<int>(std::round(1.0*Alpha/LogoPixelHeight[ChannelNo]/LogoPixelWidth[ChannelNo]));
-        Logo = Alpha*SrcData[LogoPitch[ChannelNo]*y+x*LogoStride[ChannelNo]];
-        if (AlphaDestData)  AlphaDestData[Width/LogoPixelWidth[ChannelNo]*y+x] = static_cast<uint8_t>(0xFF-Alpha);
-        DestData[Width/LogoPixelWidth[ChannelNo]*y+x].L = static_cast<uint8_t>(Logo%(0xFF));
-        DestData[Width/LogoPixelWidth[ChannelNo]*y+x].H = static_cast<uint8_t>(Logo/(0xFF));
+        Alpha = static_cast<int>(std::round(1.0*Alpha/PH/PW));
+        Logo = Alpha*SrcData[LogoPitch[ChannelNo]*y+x*ChStride];
+        if (AlphaDestData)  AlphaDestData[Width/PW*y+x] = static_cast<uint8_t>(0xFF-Alpha);
+        DestData[Width/PW*y+x].L = static_cast<uint8_t>(Logo%(0xFF));
+        DestData[Width/PW*y+x].H = static_cast<uint8_t>(Logo/(0xFF));
       }
     }
   }
@@ -2614,7 +2607,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   /* Variables storing general stuff about source clip and destination frame */
   const  AVS_VideoInfo * SrcVideoInfo;
   int  Width, Height;
-  int  PixelWidth[MaxChannelCount], PixelHeight[MaxChannelCount], FrameStride[MaxChannelCount];
+  FrameLayout  srcFmt;
   std::array<std::vector<Analyze_Sum1Type>, MaxChannelCount> Sum1;
   std::array<std::vector<Analyze_Sum2Type>, MaxChannelCount> Sum2;
   Analyze_Sum1Type * Sum1Ptr;
@@ -2667,14 +2660,15 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   Width = SrcVideoInfo->width;
   Height = SrcVideoInfo->height;
   FrameCount = SrcVideoInfo->num_frames;
-  ChannelCount = GetFramePointers(nullptr,nullptr,nullptr,nullptr,FrameStride,PixelWidth,PixelHeight,SrcVideoInfo->pixel_type)-(DestVideoInfo->height>SrcVideoInfo->height?0:1);
+  srcFmt = FrameLayoutFromPixelType(SrcVideoInfo->pixel_type);
+  ChannelCount = srcFmt.channelCount-(DestVideoInfo->height>SrcVideoInfo->height?0:1);
   /* Allocate memory for sum and square-sum vectors (depending on color space) */
   if (ChannelCount<=0)  return  Analyze_Result_GeneralError;  /* Unknown color space (a bug!) */
   try
   {
     // resize performs zero-init as well
-    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Sum1[ChannelNo].resize(Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo]);
-    if (ComputeAlpha)  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Sum2[ChannelNo].resize(Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo]);
+    for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Sum1[ChannelNo].resize(Width/srcFmt.pixelWidth[ChannelNo]*Height/srcFmt.pixelHeight[ChannelNo]);
+    if (ComputeAlpha)  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  Sum2[ChannelNo].resize(Width/srcFmt.pixelWidth[ChannelNo]*Height/srcFmt.pixelHeight[ChannelNo]);
   }
   catch (std::bad_alloc&)  { return  Analyze_Result_MemoryError; }
   /*** PHASE 1: Summing up (over time) all pixel values and their squares (Dear user: this will take some time!!) ***/
@@ -2693,7 +2687,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
     /* Get source frame... */
     SrcFrame = avs_get_frame(SrcClip,FrameNo);
     /* ...and data pointers... */
-    if (!GetFramePointers(SrcFrame,nullptr,SrcData,FramePitch,nullptr,nullptr,nullptr,SrcVideoInfo->pixel_type))
+    if (!AvsGetFramePlanesRO(SrcFrame, srcFmt, SrcData, FramePitch))
     {
       /* ...and quit loop, if problem occured */
       Result = Analyze_Result_SrcClipError;
@@ -2705,11 +2699,11 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       Sum1Ptr = Sum1[ChannelNo].data();
       Sum2Ptr = ComputeAlpha ? Sum2[ChannelNo].data() : nullptr;
       SrcPtr = SrcData[ChannelNo];
-      SrcStride = FrameStride[ChannelNo];
-      DividedWidth = Width/PixelWidth[ChannelNo];
+      SrcStride = srcFmt.sampleStep[ChannelNo];
+      DividedWidth = Width/srcFmt.pixelWidth[ChannelNo];
       SrcPtrDelta = FramePitch[ChannelNo]-DividedWidth*SrcStride;
       /* This is the critical loop: Here all color values of all source frames are added up. Fast code will be rewarded with fast computation. */
-      y = Height/PixelHeight[ChannelNo];
+      y = Height/srcFmt.pixelHeight[ChannelNo];
       if (ComputeAlpha)
       {
         while (y--)
@@ -2751,7 +2745,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       {
         Sum1Ptr = Sum1[ChannelNo].data();
         Sum2Ptr = ComputeAlpha ? Sum2[ChannelNo].data() : nullptr;
-        for (k=0 ; k<Width/PixelWidth[ChannelNo]*Height/PixelHeight[ChannelNo] ; k++)
+        for (k=0 ; k<Width/srcFmt.pixelWidth[ChannelNo]*Height/srcFmt.pixelHeight[ChannelNo] ; k++)
         {
           if (Sum1Max<((Sum1Ptr[k]<0)?(-Sum1Ptr[k]):(Sum1Ptr[k])))  Sum1Max = (Sum1Ptr[k]<0)?(-Sum1Ptr[k]):(Sum1Ptr[k]);
           if (Sum2Ptr)  if (Sum2Max<Sum2Ptr[k])  Sum2Max = Sum2Ptr[k];
@@ -2785,14 +2779,14 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   ChannelNo = 0;
   while (ChannelNo<ChannelCount)
   {
-    if (PixelWidth[ChannelNo]*PixelHeight[ChannelNo]>1)  break;
+    if (srcFmt.pixelWidth[ChannelNo]*srcFmt.pixelHeight[ChannelNo]>1)  break;
     ChannelNo++;
   }
   // ChannelNo is the first subsampled channel number and exited early, 
   // or reaches ChannelCount is no subsampled channel is present (e.g. RGB or YV24).
   try
   {
-    if (ChannelNo<ChannelCount)  ChannelMaskVector.resize((Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo]));
+    if (ChannelNo<ChannelCount)  ChannelMaskVector.resize((Width/srcFmt.pixelWidth[ChannelNo])*(Height/srcFmt.pixelHeight[ChannelNo]));
     NMSum1.resize(Width*Height-MaskSize);
     if (ComputeAlpha)  NMSum2.resize(Width*Height-MaskSize);
   }
@@ -2802,11 +2796,11 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   ChannelMaskSize = static_cast<int>(MaskSize);
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
-    const int  PW      = PixelWidth[ChannelNo];
-    const int  PH      = PixelHeight[ChannelNo];
+    const int  PW      = srcFmt.pixelWidth[ChannelNo];
+    const int  PH      = srcFmt.pixelHeight[ChannelNo];
     const int  ChWidth = Width  / PW;
     const int  ChHeight= Height / PH;
-    if (!ChannelNo || PW!=PixelWidth[ChannelNo-1] || PH!=PixelHeight[ChannelNo-1])
+    if (!ChannelNo || PW!=srcFmt.pixelWidth[ChannelNo-1] || PH!=srcFmt.pixelHeight[ChannelNo-1])
     {
       if (PW*PH==1)
       {
@@ -2915,7 +2909,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       if (ChannelNMVariance[ChannelNo]<0.0)  continue;
       AlphaWeight[ChannelNo] = 1.0;
       if (DeviationWeight>2*FLT_EPSILON)  AlphaWeight[ChannelNo] *= std::pow(ChannelNMVariance[ChannelNo],0.5*DeviationWeight);
-      if (SubsamplingWeight>FLT_EPSILON)  AlphaWeight[ChannelNo] /= std::pow(static_cast<double>(PixelWidth[ChannelNo]*PixelHeight[ChannelNo]),SubsamplingWeight);
+      if (SubsamplingWeight>FLT_EPSILON)  AlphaWeight[ChannelNo] /= std::pow(static_cast<double>(srcFmt.pixelWidth[ChannelNo]*srcFmt.pixelHeight[ChannelNo]),SubsamplingWeight);
       if (!(AlphaWeight[ChannelNo]>0.0))  AlphaWeight[ChannelNo] = 0.0;
       AlphaWeightSum += AlphaWeight[ChannelNo];
     }
@@ -2931,7 +2925,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
           {
             Sum1Ptr = Sum1[ChannelNo].data();
             Sum2Ptr = Sum2[ChannelNo].data();
-            k = (Width/PixelWidth[ChannelNo])*(y/PixelHeight[ChannelNo])+(x/PixelWidth[ChannelNo]);
+            k = (Width/srcFmt.pixelWidth[ChannelNo])*(y/srcFmt.pixelHeight[ChannelNo])+(x/srcFmt.pixelWidth[ChannelNo]);
             PixelValue = static_cast<double>(Sum2Ptr[k])-static_cast<double>(Sum1Ptr[k])*static_cast<double>(Sum1Ptr[k])/FrameCount;
             if (!(PixelValue>0.0))  PixelValue = 0.0;
             PixelValue = std::sqrt(PixelValue/(FrameCount-1)/ChannelNMVariance[ChannelNo]);
@@ -2958,20 +2952,20 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   for (auto& v : Sum2)  { v.clear(); v.shrink_to_fit(); }
   /** The destination frame pointers are determined **/
   /* Now we're approaching color-space dependent code !! */
-  if (!GetFramePointers(DestFrame,DestData,nullptr,FramePitch,nullptr,nullptr,nullptr,SrcVideoInfo->pixel_type))
+  if (!AvsGetFramePlanes(DestFrame, srcFmt, DestData, FramePitch))
     return  Analyze_Result_DestFrameError;
   if (avs_is_yuv(SrcVideoInfo))
   {
     AlphaData = DestData[0]+Height*FramePitch[0];
     AlphaPitch = FramePitch[0];
-    AlphaStride = FrameStride[0];
+    AlphaStride = srcFmt.sampleStep[0];
   }
   else
   {
     AlphaData = DestData[(DestVideoInfo->height>SrcVideoInfo->height)?0:3];  /* For RGB24 we have to copy the alpha values to the green and blue channel later ! */
     if (DestVideoInfo->height>SrcVideoInfo->height)  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  DestData[ChannelNo] += Height*FramePitch[ChannelNo];
     AlphaPitch = FramePitch[0];
-    AlphaStride = FrameStride[0];
+    AlphaStride = srcFmt.sampleStep[0];
   }
   /** The alpha channel is stored in the destination frame **/
   for (y=0 ; y<Height ; y++)
@@ -2986,9 +2980,9 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   while (ChannelNo<ChannelCount)
   {
     /* Only needed if at least one color channel is subsampled (YUY2, YV16, YV12/I420) */
-    if (PixelWidth[ChannelNo]*PixelHeight[ChannelNo]>1)
+    if (srcFmt.pixelWidth[ChannelNo]*srcFmt.pixelHeight[ChannelNo]>1)
     {
-      try  { ChannelAlphaVector.resize((Width/PixelWidth[ChannelNo])*(Height/PixelHeight[ChannelNo])); }
+      try  { ChannelAlphaVector.resize((Width/srcFmt.pixelWidth[ChannelNo])*(Height/srcFmt.pixelHeight[ChannelNo])); }
       catch (std::bad_alloc&)  { return  Analyze_Result_MemoryError; }
       break;
     }
@@ -2997,12 +2991,12 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   ChannelAlpha = AlphaChannel;
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
-    const int  PW      = PixelWidth[ChannelNo];
-    const int  PH      = PixelHeight[ChannelNo];
+    const int  PW      = srcFmt.pixelWidth[ChannelNo];
+    const int  PH      = srcFmt.pixelHeight[ChannelNo];
     const int  ChWidth = Width  / PW;
     const int  ChHeight= Height / PH;
     // optimization: skip recomputing downsampled alpha if the previous channel had the same subsampling
-    if (!(ChannelNo>0 && (PW==PixelWidth[ChannelNo-1]) && (PH==PixelHeight[ChannelNo-1])))
+    if (!(ChannelNo>0 && (PW==srcFmt.pixelWidth[ChannelNo-1]) && (PH==srcFmt.pixelHeight[ChannelNo-1])))
     {
       if (PW*PH==1)
       {
@@ -3038,7 +3032,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
         if (PixelValue<0x00)  PixelValue = 0x00;
         if (PixelValue>0xFF)  PixelValue = 0xFF;
         if (!(PixelValue<0x100))  PixelValue = 0x80;
-        DestPtr[FramePitch[ChannelNo]*y+x*FrameStride[ChannelNo]] = static_cast<uint8_t>(std::round(PixelValue));
+        DestPtr[FramePitch[ChannelNo]*y+x*srcFmt.sampleStep[ChannelNo]] = static_cast<uint8_t>(std::round(PixelValue));
       }
     }
   }
@@ -3049,12 +3043,12 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       /* Clear chroma of mask part */
       for (ChannelNo=1 ; ChannelNo<ChannelCount ; ChannelNo++)
       {
-        DestPtr = DestData[ChannelNo]+(Height/PixelHeight[ChannelNo])*FramePitch[ChannelNo];
-        for (y=0 ; y<Height/PixelHeight[ChannelNo] ; y++)
+        DestPtr = DestData[ChannelNo]+(Height/srcFmt.pixelHeight[ChannelNo])*FramePitch[ChannelNo];
+        for (y=0 ; y<Height/srcFmt.pixelHeight[ChannelNo] ; y++)
         {
-          for (x=0 ; x<Width/PixelWidth[ChannelNo] ; x++)
+          for (x=0 ; x<Width/srcFmt.pixelWidth[ChannelNo] ; x++)
           {
-            DestPtr[FramePitch[ChannelNo]*y+x*FrameStride[ChannelNo]] = 0x80;  /* No color I hope */
+            DestPtr[FramePitch[ChannelNo]*y+x*srcFmt.sampleStep[ChannelNo]] = 0x80;  /* No color I hope */
           }
         }
       }
