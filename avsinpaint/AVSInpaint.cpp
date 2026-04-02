@@ -113,7 +113,7 @@ struct InpaintMaskDataStruct
 {
   int  OffsetX, OffsetY, Width, Height, MaskPixelCount;
   std::vector<unsigned int>  MaskPixelOrder;
-  std::vector<BYTE>          chiLuma, chiChroma;
+  std::vector<uint8_t>          chiLuma, chiChroma;
   std::vector<float>         GchiLuma, GchiChroma;
   InpaintMaskDataStruct() : OffsetX(0), OffsetY(0), Width(0), Height(0), MaskPixelCount(0) {}
 };
@@ -186,7 +186,7 @@ struct FMMHeapStruct
 /* We need double bytes for deblending - ints are too large (needs too much memory) */
 struct DoubleByte
 {
-  BYTE  L, H;
+  uint8_t  L, H;
 };
 
 
@@ -196,7 +196,7 @@ struct DeblendDataStruct
   int  PixelType, Width, Height, Stride[MaxChannelCount], PixelWidth[MaxChannelCount], PixelHeight[MaxChannelCount];
   /* Static logo */
   std::array<std::vector<DoubleByte>, MaxChannelCount>  StaticLogoDataChannels;
-  std::array<std::vector<BYTE>, MaxChannelCount>         StaticAlphaDataChannels;
+  std::array<std::vector<uint8_t>, MaxChannelCount>         StaticAlphaDataChannels;
   /* Dynamic logo */
   AVS_Clip * LogoClip, * AlphaClip;
   int  LogoPixelType, AlphaPixelType, LogoFrameCount, AlphaFrameCount, LogoStride[MaxChannelCount], AlphaStride;
@@ -243,30 +243,30 @@ void  AVSC_CC  DistanceFunction_Free(AVS_FilterInfo *  FilterInfo);
 
 /** Own functions **/
 /* Common functions */
-int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const BYTE **  ReadPtrs,  int *  Pitch,  int *  Stride,  int *  PixelWidth,  int *  PixelHeight,  int  PixelType);
+int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  uint8_t **  WritePtrs,  const uint8_t **  ReadPtrs,  int *  Pitch,  int *  Stride,  int *  PixelWidth,  int *  PixelHeight,  int  PixelType);
 bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight);
 bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<int> &  HeapVec);
 /* Inpaint tools */
 InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  InpaintDataStruct *  InpaintData);
 void  AddPreBlurValue(float  G[],  int  x,  int  y,  int  Width,  int  Height,  double  Value,  double  BlurXKernel[],  int  BlurXKernelSize,  double  BlurYKernel[],  int  BlurYKernelYize);
-double  InpaintPixel(double  RadiusX,  double  RadiusY,  BYTE  u[],  BYTE  chi[],  int  Stride,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY);
+double  InpaintPixel(double  RadiusX,  double  RadiusY,  uint8_t  u[],  uint8_t  chi[],  int  Stride,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY);
 double  GetCoherenceData(double *  CoherenceDirectionX,  double *  CoherenceDirectionY,  double  TensorXX,  double  TensorXY,  double  TensorYY,  double  Sharpness);
 void  GetStructureTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,
-                         float *  GchiLuma,  float *  GchiuLuma,  BYTE *  chiLuma,  double  LumaWeight,
-                         float *  GchiChroma,  float **  GchiuChromas,  BYTE *  chiChroma,  double  ChromaWeight,
+                         float *  GchiLuma,  float *  GchiuLuma,  uint8_t *  chiLuma,  double  LumaWeight,
+                         float *  GchiChroma,  float **  GchiuChromas,  uint8_t *  chiChroma,  double  ChromaWeight,
                          int  ChromaPixelWidth,  int  ChromaPixelHeight,  int  ChromaChannelCount,
                          int  x,  int  y,  int  Width,  int  Height,
                          double *  LumaBlurXKernel,  int  LumaBlurXKernelSize,  int  LumaXDirection,
                          double *  LumaBlurYKernel,  int  LumaBlurYKernelSize,  int  LumaYDirection,
                          double *  ChromaBlurXKernel,  int  ChromaBlurXKernelSize,  int  ChromaXDirection,
                          double *  ChromaBlurYKernel,  int  ChromaBlurYKernelSize,  int  ChromaYDirection);
-bool  GetChannelTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,  float  Gchi[],  float  Gchiu[],  BYTE  chi[],  int  x,  int  y,  int  Width,  int  Height,  double  BlurKernelX[],  int  BlurKernelXSize,  double  BlurKernelY[],  int  BlurKernelYSize);
+bool  GetChannelTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,  float  Gchi[],  float  Gchiu[],  uint8_t  chi[],  int  x,  int  y,  int  Width,  int  Height,  double  BlurKernelX[],  int  BlurKernelXSize,  double  BlurKernelY[],  int  BlurKernelYSize);
 double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  double  Center);
 /* Deblend tools */
-void  DeblendDynamic(BYTE  Data[],  const  BYTE  LogoData[],  const  BYTE  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height);
-void  DeblendDynamicSubsampled(BYTE  Data[],  const  BYTE  LogoData[],  const  BYTE  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
-void  DeblendStatic(BYTE  Data[],  const  DoubleByte  LogoData[],  const  BYTE  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height);
-int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  BYTE *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo);
+void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height);
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
+void  DeblendStatic(uint8_t  Data[],  const  DoubleByte  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height);
+int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo);
 /* Analyze tools */
 int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  AVS_Clip *  SrcClip,  unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,  double  DeviationWeight,  double  SubsamplingWeight);
 
@@ -581,7 +581,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   InpaintDataStruct * InpaintData;
   InpaintMaskDataStruct * MaskData;
   AVS_VideoFrame * Frame;
-  BYTE * FrameData[MaxChannelCount], * LumaData, * ChromaDatas[MaxChannelCount-1], * ChromaData;
+  uint8_t * FrameData[MaxChannelCount], * LumaData, * ChromaDatas[MaxChannelCount-1], * ChromaData;
   int  FramePitch[MaxChannelCount], LumaPitch, * ChromaPitch;
   int  k, x, y, PixelNo, ChannelNo;
   double  CoherenceStrength, CoherenceDirectionX, CoherenceDirectionY, TensorXX, TensorXY, TensorYY, Value;
@@ -607,8 +607,8 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   /* Given by mask */
   int  Width, Height, MaskPixelCount;
   unsigned int * MaskPixelOrder;
-  std::vector<BYTE> chiLumaVec, chiChromaVec;
-  BYTE * chiLuma = nullptr, * chiChroma = nullptr;
+  std::vector<uint8_t> chiLumaVec, chiChromaVec;
+  uint8_t * chiLuma = nullptr, * chiChroma = nullptr;
   std::vector<float> GchiLumaVec, GchiChromaVec, GchiuLumaVec;
   float * GchiLuma = nullptr, * GchiChroma = nullptr, * GchiuLuma = nullptr;
   std::vector<float> GchiuChromasVec[MaxChannelCount-1];
@@ -757,9 +757,9 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   /* Prepare blurred images */
   if (InpaintData->StaticMaskData)
   {
-    std::memcpy(chiLuma,MaskData->chiLuma.data(),sizeof(BYTE)*Width*Height);
+    std::memcpy(chiLuma,MaskData->chiLuma.data(),sizeof(uint8_t)*Width*Height);
     if(ChromaChannelCount)
-      std::memcpy(chiChroma,MaskData->chiChroma.data(),sizeof(BYTE)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
+      std::memcpy(chiChroma,MaskData->chiChroma.data(),sizeof(uint8_t)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
     if (LumaWeight!=0.0)  std::memcpy(GchiLuma,MaskData->GchiLuma.data(),sizeof(float)*Width*Height);
     if (ChromaWeight!=0.0)  std::memcpy(GchiChroma,MaskData->GchiChroma.data(),sizeof(float)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
   }
@@ -815,7 +815,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
       Value = 1.0*LumaData[LumaPitch*y+x*LumaStride];
       #endif
     }
-    LumaData[LumaPitch*y+x*LumaStride] = static_cast<BYTE>(Value = std::round(Value));
+    LumaData[LumaPitch*y+x*LumaStride] = static_cast<uint8_t>(Value = std::round(Value));
     if (GchiuLuma)  AddPreBlurValue(GchiuLuma,x,y,Width,Height,Value,LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
     if (GchiLuma)  AddPreBlurValue(GchiLuma,x,y,Width,Height,1.0,LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
     chiLuma[MaskPixelOrder[PixelNo]] = 0;
@@ -868,7 +868,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
           }
           #endif
         }
-        ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaStride] = static_cast<BYTE>(Value = std::round(Value));
+        ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaStride] = static_cast<uint8_t>(Value = std::round(Value));
         if (GchiuChromas[ChannelNo])  AddPreBlurValue(GchiuChromas[ChannelNo],x,y,Width/ChromaPixelWidth,Height/ChromaPixelHeight,Value,ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
       }
       if (ErrorText)  break;
@@ -991,7 +991,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     {
       /* Core function for static logos is called */
       DoubleByte * logoPtrs[MaxChannelCount] = {};
-      BYTE * alphaPtrs[MaxChannelCount] = {};
+      uint8_t * alphaPtrs[MaxChannelCount] = {};
       for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)
       {
         logoPtrs[ChannelNo] = DeblendData->StaticLogoDataChannels[ChannelNo].empty() ? nullptr : DeblendData->StaticLogoDataChannels[ChannelNo].data();
@@ -1054,7 +1054,7 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
   DeblendDataStruct * DeblendData;
   AVS_VideoFrame * Frame;
   int  ChannelCount, Width, Height, PixelType, FramePitch[MaxChannelCount], * FrameStride, * FramePixelWidth, * FramePixelHeight;
-  BYTE * FrameData[MaxChannelCount], * AlphaData;
+  uint8_t * FrameData[MaxChannelCount], * AlphaData;
   int  ChannelNo;
 
   /* Get some data from the data structure, load frames and get data pointers */
@@ -1093,8 +1093,8 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   int  ChannelCount, PixelType, Width, Height, FramePitch[MaxChannelCount], * FrameStride, * FramePixelWidth, * FramePixelHeight;
   int  LogoChannelCount, LogoPixelType, LogoFramePitch[MaxChannelCount], * LogoFrameStride;
   int  AlphaChannelCount, AlphaPixelType, AlphaFramePitch[MaxChannelCount], AlphaPitch, AlphaStride;
-  BYTE * FrameData[MaxChannelCount];
-  const  BYTE * LogoFrameData[MaxChannelCount], * AlphaFrameData[MaxChannelCount], * AlphaData;
+  uint8_t * FrameData[MaxChannelCount];
+  const  uint8_t * LogoFrameData[MaxChannelCount], * AlphaFrameData[MaxChannelCount], * AlphaData;
   int  ChannelNo;
   const char * ErrorText;
 
@@ -1205,12 +1205,12 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   AVS_VideoInfo * DestVideoInfo;
   AVS_VideoFrame * MaskFrame, * DestFrame;
   AVS_FilterInfo * FilterInfo;
-  const  BYTE * MaskData;
+  const  uint8_t * MaskData;
   int  MaskStride, MaskPitch;
   bool  MaskGiven, ComputeAlpha;
   double  DeviationWeight, SubsamplingWeight;
   int32_t  MaskSize, AnalyzeResult;
-  BYTE * Mask;
+  uint8_t * Mask;
   const char * ErrorText;
   /* For mask-processing */
   int  x, y;
@@ -1293,7 +1293,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   /* Release mask clip */
   if (MaskClip)  avs_release_clip(MaskClip);
   /* Allocate mask memory */
-  std::vector<BYTE> MaskVec;
+  std::vector<uint8_t> MaskVec;
   if (!ErrorText)
   {
     try  { MaskVec.resize(SrcVideoInfo->width*SrcVideoInfo->height); }
@@ -1475,7 +1475,7 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
   int  Width, Height, k, x, y, FramePitch[MaxChannelCount], Pitch, Stride, ScaleSign;
   float * DistFcn, * u;
   double  Scale;
-  BYTE * FrameData[MaxChannelCount], * DataPtr;
+  uint8_t * FrameData[MaxChannelCount], * DataPtr;
   const char * ErrorText;
 
   DistFcnData = static_cast<DistanceFunctionDataStruct*>(FilterInfo->user_data);
@@ -1541,7 +1541,7 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
   {
     for (x=0 ; x<Width ; x++)
     {
-      *DataPtr = static_cast<BYTE>(((*u)>255.0)?0xFF:std::round(*u));
+      *DataPtr = static_cast<uint8_t>(((*u)>255.0)?0xFF:std::round(*u));
       DataPtr += Stride;
       u++;
     }
@@ -1575,7 +1575,7 @@ void  AVSC_CC  DistanceFunction_Free(AVS_FilterInfo *  FilterInfo)
 /****************************************************************
                       Common functions
  ****************************************************************/
-int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  BYTE **  WritePtrs,  const BYTE **  ReadPtrs,  int *  Pitch,  int *  Stride,  int *  PixelWidth,  int *  PixelHeight,  int  PixelType)
+int  GetFramePointers(AVS_VideoFrame *  VideoFrame,  uint8_t **  WritePtrs,  const uint8_t **  ReadPtrs,  int *  Pitch,  int *  Stride,  int *  PixelWidth,  int *  PixelHeight,  int  PixelType)
 /* This functions stores some informations about a frame in the
    places given. If read/write pointers are requested and cannot be
    gathered (e.g. write pointers for a read-only frame), 0 is
@@ -1934,8 +1934,8 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
   int  x, y, xmin, xmax, ymin, ymax, Width, Height, k;
   int  Stride, Pitch, FramePitch[MaxChannelCount];
   signed int  MaskSize;
-  const  BYTE * FrameData[MaxChannelCount], * DataPtr;
-  BYTE * chi;
+  const  uint8_t * FrameData[MaxChannelCount], * DataPtr;
+  uint8_t * chi;
   InpaintMaskResult  Result;
   bool  MaskIsSet;
 
@@ -2167,7 +2167,7 @@ void  AddPreBlurValue(float  G[],  int  x,  int  y,  int  Width,  int  Height,  
 
 
 
-double  InpaintPixel(double  RadiusX,  double  RadiusY,  BYTE  u[],  BYTE  chi[],  int  Stride,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY)
+double  InpaintPixel(double  RadiusX,  double  RadiusY,  uint8_t  u[],  uint8_t  chi[],  int  Stride,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY)
 {
   int  xmin, xmax, ymin, ymax, x0, y0, dx, dy, dx2, dy2;
   double  u0, w, w0, Radius;
@@ -2277,8 +2277,8 @@ double  GetCoherenceData(double *  CoherenceDirectionX,  double *  CoherenceDire
 
 
 void  GetStructureTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,
-                         float *  GchiLuma,  float *  GchiuLuma,  BYTE *  chiLuma,  double  LumaWeight,
-                         float *  GchiChroma,  float **  GchiuChromas,  BYTE *  chiChroma,  double  ChromaWeight,
+                         float *  GchiLuma,  float *  GchiuLuma,  uint8_t *  chiLuma,  double  LumaWeight,
+                         float *  GchiChroma,  float **  GchiuChromas,  uint8_t *  chiChroma,  double  ChromaWeight,
                          int  ChromaPixelWidth,  int  ChromaPixelHeight,  int  ChromaChannelCount,
                          int  x,  int  y,  int  Width,  int  Height,
                          double *  LumaBlurXKernel,  int  LumaBlurXKernelSize,  int  LumaXDirection,
@@ -2331,7 +2331,7 @@ void  GetStructureTensor(double *  TensorXX,  double *  TensorXY,  double *  Ten
 
 
 
-bool  GetChannelTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,  float  Gchi[],  float  Gchiu[],  BYTE  chi[],  int  x,  int  y,  int  Width,  int  Height,  double  BlurKernelX[],  int  BlurKernelXSize,  double  BlurKernelY[],  int  BlurKernelYSize)
+bool  GetChannelTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,  float  Gchi[],  float  Gchiu[],  uint8_t  chi[],  int  x,  int  y,  int  Width,  int  Height,  double  BlurKernelX[],  int  BlurKernelXSize,  double  BlurKernelY[],  int  BlurKernelYSize)
 /* This (fairly) realized formula (21) of Bornemann/März-Paper */
 /* This function uses forward differences. Anything else must be done by providing an appropriate kernel and by modifying x,y */
 {
@@ -2396,7 +2396,7 @@ double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  d
 /****************************************************************
                         Deblend tools
  ****************************************************************/
-void  DeblendDynamic(BYTE  Data[],  const  BYTE  LogoData[],  const  BYTE  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height)
+void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height)
 /* Performs a simple deblend with given logo and alpha data         */
 {
   int  x;
@@ -2415,7 +2415,7 @@ void  DeblendDynamic(BYTE  Data[],  const  BYTE  LogoData[],  const  BYTE  Alpha
         Value = 0xFF*((int)(Data[0]))-((int)(AlphaData[0]))*((int)(LogoData[0]));
         Value /= 0xFF-AlphaData[0];
         if (Value<0.0)  Value = 0.0;  else  if (Value>255.0)  Value = 255.0;
-        Data[0] = static_cast<BYTE>(std::round(Value));
+        Data[0] = static_cast<uint8_t>(std::round(Value));
       }
       AlphaData += AlphaStride;
       LogoData += LogoStride;
@@ -2429,7 +2429,7 @@ void  DeblendDynamic(BYTE  Data[],  const  BYTE  LogoData[],  const  BYTE  Alpha
 
 
 
-void  DeblendDynamicSubsampled(BYTE  Data[],  const  BYTE  LogoData[],  const  BYTE  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight)
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight)
 /* Performs a simple deblend with given logo and alpha data, where
    the source and logo data are subsampled with respect to the
    alpha data.                                                      */
@@ -2460,7 +2460,7 @@ void  DeblendDynamicSubsampled(BYTE  Data[],  const  BYTE  LogoData[],  const  B
         Value = TotalAlpha*((int)(Data[0]))-((int)Alpha)*((int)(LogoData[0]));
         Value /= TotalAlpha-Alpha;
         if (Value<0.0)  Value = 0.0;  else  if (Value>255.0)  Value = 255.0;
-        Data[0] = static_cast<BYTE>(std::round(Value));
+        Data[0] = static_cast<uint8_t>(std::round(Value));
       }
       LogoData += LogoStride;
       Data += Stride;
@@ -2473,7 +2473,7 @@ void  DeblendDynamicSubsampled(BYTE  Data[],  const  BYTE  LogoData[],  const  B
 
 
 
-void  DeblendStatic(BYTE  Data[],  const  DoubleByte  LogoData[],  const  BYTE  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height)
+void  DeblendStatic(uint8_t  Data[],  const  DoubleByte  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height)
 /* This deblends a logo with preprocessed data (by
    DeblendStaticPrepare)                                            */
 {
@@ -2491,7 +2491,7 @@ void  DeblendStatic(BYTE  Data[],  const  DoubleByte  LogoData[],  const  BYTE  
         Value = (255*((int)(Data[0]))-256*((int)(LogoData[0].H))+((int)(LogoData[0].L)));
         Value /= AlphaData[0];
         if (Value<0.0)  Value = 0.0;  else  if (Value>255.0)  Value = 255.0;
-        Data[0] = static_cast<BYTE>(std::round(Value));
+        Data[0] = static_cast<uint8_t>(std::round(Value));
       }
       AlphaData++;
       LogoData++;
@@ -2503,14 +2503,14 @@ void  DeblendStatic(BYTE  Data[],  const  DoubleByte  LogoData[],  const  BYTE  
 
 
 
-int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  BYTE *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo)
+int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo)
 /* If the logo to be deblended is static (not moving), some values
    can be prepared prior to deblending. Those values will be
    stored in the LogoData/AlphaData vectors, which are later
    handed over to the static-deblend-function                       */
 {
-  const  BYTE * LogoData[MaxChannelCount], * AlphaData[MaxChannelCount], * SrcData, * AlphaData0;
-  BYTE * AlphaDestData;
+  const  uint8_t * LogoData[MaxChannelCount], * AlphaData[MaxChannelCount], * SrcData, * AlphaData0;
+  uint8_t * AlphaDestData;
   DoubleByte * DestData;
   int  LogoPitch[MaxChannelCount], LogoStride[MaxChannelCount], LogoPixelWidth[MaxChannelCount], LogoPixelHeight[MaxChannelCount], AlphaPitch[MaxChannelCount], AlphaStride[MaxChannelCount], AlphaPitch0, AlphaStride0;
   int  ChannelNo, ChannelCount, Width, Height, x, y, x2, y2, Alpha, Logo;
@@ -2560,9 +2560,9 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  BYTE *  AlphaDataCh
         }
         Alpha = static_cast<int>(std::round(1.0*Alpha/LogoPixelHeight[ChannelNo]/LogoPixelWidth[ChannelNo]));
         Logo = Alpha*SrcData[LogoPitch[ChannelNo]*y+x*LogoStride[ChannelNo]];
-        if (AlphaDestData)  AlphaDestData[Width/LogoPixelWidth[ChannelNo]*y+x] = static_cast<BYTE>(0xFF-Alpha);
-        DestData[Width/LogoPixelWidth[ChannelNo]*y+x].L = static_cast<BYTE>(Logo%(0xFF));
-        DestData[Width/LogoPixelWidth[ChannelNo]*y+x].H = static_cast<BYTE>(Logo/(0xFF));
+        if (AlphaDestData)  AlphaDestData[Width/LogoPixelWidth[ChannelNo]*y+x] = static_cast<uint8_t>(0xFF-Alpha);
+        DestData[Width/LogoPixelWidth[ChannelNo]*y+x].L = static_cast<uint8_t>(Logo%(0xFF));
+        DestData[Width/LogoPixelWidth[ChannelNo]*y+x].H = static_cast<uint8_t>(Logo/(0xFF));
       }
     }
   }
@@ -2601,15 +2601,15 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   Analyze_Sum1Type  Sum1Max;
   Analyze_Sum2Type  Sum2Max;
   signed int  Value12;
-  const  BYTE * SrcData[MaxChannelCount];
-  const  BYTE * SrcPtr;
+  const  uint8_t * SrcData[MaxChannelCount];
+  const  uint8_t * SrcPtr;
   int  SrcPtrDelta, DividedWidth, SrcStride;
   /* Variables for Phase 2 */
-  BYTE * ChannelMask;
+  uint8_t * ChannelMask;
   /* Downsampled logo mask for subsampled chroma channels (same layout as ChannelAlphaVector).
      Each macro-pixel is masked if any of its full-res pixels is masked.
      Not needed for RGB or YV24 where all channels share full resolution. */
-  std::vector<BYTE> ChannelMaskVector;
+  std::vector<uint8_t> ChannelMaskVector;
   /* Non-masked pixel sums collected per channel for computing average and variance.
      Allocated at full-frame size (Width*Height-MaskSize) as an upper bound;
      only the first k elements are filled and sorted per channel iteration. */
@@ -2623,8 +2623,8 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
      Not needed for RGB or YV24 where all channels share the same resolution as the luma/alpha. */
   std::vector<float> ChannelAlphaVector;
   double  PixelValue, AlphaSum, AlphaWeightSum, AlphaWeight[MaxChannelCount];
-  BYTE * DestData[MaxChannelCount];
-  BYTE * AlphaData, * DestPtr;
+  uint8_t * DestData[MaxChannelCount];
+  uint8_t * AlphaData, * DestPtr;
   int  AlphaPitch, AlphaStride;
 
 
@@ -2788,7 +2788,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       {
         ChannelMask = ChannelMaskVector.data();
         /* Reused per subsampled channel (e.g. U and V in YV12) — must be zeroed before accumulation */
-        std::fill(ChannelMaskVector.begin(), ChannelMaskVector.end(), BYTE(0));
+        std::fill(ChannelMaskVector.begin(), ChannelMaskVector.end(), uint8_t(0));
         for (y=0 ; y<Height ; y++)
         {
           const int  ChRowStart = ChWidth * (y/PH);
@@ -2948,7 +2948,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   {
     for(x=0 ; x<Width ; x++)
     {
-      AlphaData[y*AlphaPitch+x*AlphaStride] = static_cast<BYTE>(std::round(AlphaChannel[Width*y+x]*0xFF));  /* 0=transparent 255=opaque */
+      AlphaData[y*AlphaPitch+x*AlphaStride] = static_cast<uint8_t>(std::round(AlphaChannel[Width*y+x]*0xFF));  /* 0=transparent 255=opaque */
     }
   }
   /** Now we compute the color channels **/
@@ -3008,7 +3008,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
         if (PixelValue<0x00)  PixelValue = 0x00;
         if (PixelValue>0xFF)  PixelValue = 0xFF;
         if (!(PixelValue<0x100))  PixelValue = 0x80;
-        DestPtr[FramePitch[ChannelNo]*y+x*FrameStride[ChannelNo]] = static_cast<BYTE>(std::round(PixelValue));
+        DestPtr[FramePitch[ChannelNo]*y+x*FrameStride[ChannelNo]] = static_cast<uint8_t>(std::round(PixelValue));
       }
     }
   }
