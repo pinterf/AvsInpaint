@@ -271,7 +271,8 @@ bool  AvsGetFramePlanesRO(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  con
 bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight);
 bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<int> &  HeapVec);
 /* Inpaint tools */
-InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  InpaintDataStruct *  InpaintData);
+InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData);
+static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  const InpaintDataStruct *  InpaintData);
 void  AddPreBlurValue(float  G[],  int  x,  int  y,  int  Width,  int  Height,  double  Value,  double  BlurXKernel[],  int  BlurXKernelSize,  double  BlurYKernel[],  int  BlurYKernelYize);
 double  InpaintPixel(double  RadiusX,  double  RadiusY,  uint8_t  u[],  uint8_t  chi[],  int  Stride,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY);
 double  GetCoherenceData(double *  CoherenceDirectionX,  double *  CoherenceDirectionY,  double  TensorXX,  double  TensorXY,  double  TensorYY,  double  Sharpness);
@@ -539,7 +540,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     Frame = avs_get_frame(MaskClip,0);
     if (Frame)
     {
-      switch (InpaintPrepareMask(&InpaintData->StaticMaskData,Frame,InpaintData))
+      switch (AvsInpaintPrepareMask(&InpaintData->StaticMaskData,Frame,InpaintData))
       {
         case InpaintMaskResult::FullMask :
         /* If error-switch is set, a full mask throws an error, otherwise this filter reduces to the do-nothing-filter */
@@ -646,7 +647,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
     if (!Frame)  ErrorText = "InpaintLogo: Could not get mask frame";
     if (!ErrorText)
     {
-      switch (InpaintPrepareMask(&MaskData,Frame,InpaintData))
+      switch (AvsInpaintPrepareMask(&MaskData,Frame,InpaintData))
       {
         case InpaintMaskResult::FullMask :
         #if ((InpaintFullMaskError)>=2)
@@ -675,7 +676,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
     if (ErrorText)
     {
       FilterInfo->error = ErrorText;
-      InpaintPrepareMask(&MaskData,nullptr,InpaintData);
+      delete MaskData;  MaskData = nullptr;
       return  nullptr;
     }
   }
@@ -683,7 +684,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   Frame = avs_get_frame(FilterInfo->child,FrameNo);
   if (!(MaskData&&Frame))  /* No mask data? Then we just return the source frame */
   {
-    if (!InpaintData->StaticMaskData)  InpaintPrepareMask(&MaskData,nullptr,InpaintData);
+    if (!InpaintData->StaticMaskData)  { delete MaskData;  MaskData = nullptr; }
     if (!Frame)  FilterInfo->error = "InpaintLogo: Could not get video frame";
     return  Frame;
   }
@@ -772,7 +773,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   /* Error? Then run away */
   if (ErrorText)
   {
-    if (!InpaintData->StaticMaskData)  InpaintPrepareMask(&MaskData,nullptr,InpaintData);
+    if (!InpaintData->StaticMaskData)  { delete MaskData;  MaskData = nullptr; }
     if (Frame)  avs_release_video_frame(Frame);  else  ErrorText = "InpaintLogo: Could not get video Frame";
     FilterInfo->error = ErrorText;
     return  nullptr;
@@ -908,7 +909,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
     }
     if (chiChroma[CWidth*y+x])  chiChroma[CWidth*y+x]--;
   }
-  if (!InpaintData->StaticMaskData)  InpaintPrepareMask(&MaskData,nullptr,InpaintData);
+  if (!InpaintData->StaticMaskData)  { delete MaskData;  MaskData = nullptr; }
   if (ErrorText)
   {
     if (Frame)  avs_release_video_frame(Frame);
@@ -927,7 +928,7 @@ void  AVSC_CC  Inpaint_Free(AVS_FilterInfo *  FilterInfo)
   if (FilterInfo->user_data)
   {
     InpaintData = static_cast<InpaintDataStruct*>(FilterInfo->user_data);
-    if (InpaintData->StaticMaskData)  InpaintPrepareMask(&InpaintData->StaticMaskData,nullptr,InpaintData);
+    if (InpaintData->StaticMaskData)  { delete InpaintData->StaticMaskData;  InpaintData->StaticMaskData = nullptr; }
     if (InpaintData->MaskClip)  avs_release_clip(InpaintData->MaskClip);
     delete InpaintData;
   }
@@ -1943,16 +1944,16 @@ bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Wid
 /****************************************************************
                          Inpaint tools
  ****************************************************************/
-InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  InpaintDataStruct *  InpaintData)
+InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData)
 /* If mask is full or empty, MaskData is cleared */
 {
   InpaintMaskDataStruct * MaskData;
   double  PixelWidth, PixelHeight;
   float * DistFcn, * u, * Gchi;
   int  x, y, xmin, xmax, ymin, ymax, Width, Height, k;
-  int  Stride, Pitch, FramePitch[MaxChannelCount];
+  int  SampleStep, Pitch;
   signed int  MaskSize;
-  const  uint8_t * FrameData[MaxChannelCount], * DataPtr;
+  const  uint8_t * DataPtr;
   uint8_t * chi;
   InpaintMaskResult  Result;
   bool  MaskIsSet;
@@ -1964,8 +1965,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
     MaskData = nullptr;
     *MaskDataPtr = nullptr;
   }
-  if (!(Frame && AvsGetFramePlanesRO(Frame,InpaintData->maskLayout,FrameData,FramePitch) && FrameData[0]))
-    return  Frame?InpaintMaskResult::FrameError:InpaintMaskResult::NoMask;
+  if (!planes[0])  return  InpaintMaskResult::FrameError;
   MaskData = new (std::nothrow) InpaintMaskDataStruct;
   if (!MaskData)  return  InpaintMaskResult::MemoryError;
   MaskData->Width = Width = InpaintData->Width;
@@ -1974,10 +1974,10 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
   try  { DistFcnVec.resize(Width*Height); }
   catch (std::bad_alloc&)  { delete MaskData;  return  InpaintMaskResult::MemoryError; }
   DistFcn = DistFcnVec.data();
-  Pitch = FramePitch[InpaintData->MaskChannelNo];
-  Stride = InpaintData->maskLayout.sampleStep[InpaintData->MaskChannelNo];
+  Pitch = pitch[InpaintData->MaskChannelNo];
+  SampleStep = maskLayout.sampleStep[InpaintData->MaskChannelNo];
   MaskSize = 0;
-  DataPtr = FrameData[InpaintData->MaskChannelNo];
+  DataPtr = planes[InpaintData->MaskChannelNo];
   u = DistFcn;
   if (InpaintData->FlipMask)
   {
@@ -1990,9 +1990,9 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
     {
       MaskSize += (MaskIsSet = ((MaskThresholdSign)*(*DataPtr)>(MaskThresholdSign)*(MaskThreshold))) ? 1 : 0;
       *(u++) = MaskIsSet?0.0f:1.0f;
-      DataPtr += Stride;
+      DataPtr += SampleStep;
     }
-    DataPtr += Pitch-Width*Stride;
+    DataPtr += Pitch-Width*SampleStep;
   }
   if (!MaskSize || (MaskSize==Width*Height))
   {
@@ -2091,7 +2091,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
     }
     /* Save MaskSize, then MaskSize will be decreased for each pixel set. If it doesn't vanish after processing the mask again, an internal error occured */
     MaskData->MaskPixelCount = MaskSize;
-    DataPtr = FrameData[InpaintData->MaskChannelNo]+MaskData->OffsetY*Pitch+MaskData->OffsetX*Stride;
+    DataPtr = planes[InpaintData->MaskChannelNo]+MaskData->OffsetY*Pitch+MaskData->OffsetX*SampleStep;
     u = DistFcn;
     chi = MaskData->chiLuma.data();
     if (InpaintData->FlipMask)  DataPtr -= (InpaintData->Height-1)*Pitch;  /* Pitch is negative already ! */
@@ -2104,9 +2104,9 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
         chi[0] = chi[0] || MaskIsSet;
         chi++;
         *(u++) = MaskIsSet?1.0f:0.0f;
-        DataPtr += Stride;
+        DataPtr += SampleStep;
       }
-      DataPtr += Pitch-Width*Stride;
+      DataPtr += Pitch-Width*SampleStep;
     }
     if (MaskSize)  Result = InpaintMaskResult::GeneralError;
   }
@@ -2165,6 +2165,17 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AV
   if (Result!=InpaintMaskResult::OK)  { delete MaskData;  MaskData = nullptr; }
   *MaskDataPtr = MaskData;
   return  Result;
+}
+
+
+static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  const InpaintDataStruct *  InpaintData)
+/* Thin AVS wrapper: extracts plane pointers from the frame and calls the API-agnostic InpaintPrepareMask. */
+{
+  const uint8_t * planes[MaxChannelCount];
+  int  pitch[MaxChannelCount];
+  if (!Frame || !AvsGetFramePlanesRO(Frame, InpaintData->maskLayout, planes, pitch) || !planes[0])
+    return  Frame ? InpaintMaskResult::FrameError : InpaintMaskResult::NoMask;
+  return  InpaintPrepareMask(MaskDataPtr, InpaintData->maskLayout, planes, pitch, InpaintData);
 }
 
 
