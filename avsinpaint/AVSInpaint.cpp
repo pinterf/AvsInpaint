@@ -1495,8 +1495,8 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
 {
   DistanceFunctionDataStruct * DistFcnData;
   AVS_VideoFrame * Frame;
-  int  Width, Height, k, x, y, FramePitch[MaxChannelCount], Pitch, Stride, ScaleSign;
-  float * DistFcn, * u;
+  int  Width, Height, x, y, FramePitch[MaxChannelCount], Pitch, Stride, ScaleSign;
+  float * DistFcn;
   double  Scale;
   uint8_t * FrameData[MaxChannelCount], * DataPtr;
   const char * ErrorText;
@@ -1539,13 +1539,13 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
     FilterInfo->error = ErrorText;
     return  nullptr;
   }
-  u = DistFcn;
   DataPtr = FrameData[DistFcnData->LumaChannelNo];
   for (y=0 ; y<Height ; y++)
   {
+    const int distRow = y*Width;
     for (x=0 ; x<Width ; x++)
     {
-      *(u++) = (ScaleSign*(MaskThresholdSign)*(*DataPtr)>ScaleSign*(MaskThresholdSign)*(MaskThreshold))?0.0f:1.0f;
+      DistFcn[distRow+x] = (ScaleSign*(MaskThresholdSign)*(*DataPtr)>ScaleSign*(MaskThresholdSign)*(MaskThreshold))?0.0f:1.0f;
       DataPtr += Stride;
     }
     DataPtr += Pitch-Width*Stride;
@@ -1556,17 +1556,16 @@ AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInf
     FilterInfo->error = "DistanceFunction: Mask processing failed: Out of memory";
     return  nullptr;
   }
-  u = DistFcn;
-  for (k=0 ; k<Width*Height ; k++)  *(u++) *= static_cast<float>(Scale);
-  u = DistFcn;
+  for (float& v : DistFcnVec)  v *= static_cast<float>(Scale);
   DataPtr = FrameData[DistFcnData->LumaChannelNo];
   for (y=0 ; y<Height ; y++)
   {
+    const int distRow = y*Width;
     for (x=0 ; x<Width ; x++)
     {
-      *DataPtr = static_cast<uint8_t>(((*u)>255.0)?0xFF:std::round(*u));
+      const float v = DistFcn[distRow+x];
+      *DataPtr = static_cast<uint8_t>((v>255.0f)?0xFF:std::round(v));
       DataPtr += Stride;
-      u++;
     }
     DataPtr += Pitch-Width*Stride;
   }
