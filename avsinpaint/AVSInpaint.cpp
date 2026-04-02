@@ -318,13 +318,13 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   MaskVideoInfo = MaskClip?avs_get_video_info(MaskClip):nullptr;
   if (MaskClip && !MaskVideoInfo)  ErrorText = "InpaintLogo: Could not load mask clip";
   /* Check all video properties */
-  if (!(ErrorText || avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_yv16(VideoInfo) || avs_is_yv24(VideoInfo) || avs_is_y8(VideoInfo) || avs_is_rgb32(VideoInfo) || avs_is_rgb24(VideoInfo) || avs_is_planar_rgb(VideoInfo) || avs_is_planar_rgba(VideoInfo)))  ErrorText = "InpaintLogo: Color space unknown (RGB24, RGB32, RGBP, RGBAP, YUY2, YV12/16/24/8 allowed only)";
-  if (!(ErrorText || (avs_has_video(VideoInfo) && VideoInfo->num_frames && VideoInfo->width && VideoInfo->height)))  ErrorText = "InpaintLogo: Source clip has no video";
-  if (!ErrorText && MaskClip && !(avs_is_yuy2(MaskVideoInfo) || avs_is_yv12(MaskVideoInfo) || avs_is_yv16(MaskVideoInfo) || avs_is_yv24(MaskVideoInfo) || avs_is_y8(MaskVideoInfo) || avs_is_rgb32(MaskVideoInfo) || avs_is_planar_rgba(MaskVideoInfo)))  ErrorText = "InpaintLogo: Mask color space must have luma channel (YUY2, YV12/16/24, Y8) or alpha channel (RGB32, RGBAP)";
-  if (!ErrorText && MaskClip && !(avs_has_video(MaskVideoInfo) && MaskVideoInfo->num_frames && MaskVideoInfo->width && MaskVideoInfo->height))  ErrorText = "InpaintLogo: Mask clip has no video";
-  if (!ErrorText && MaskClip && !((VideoInfo->width==MaskVideoInfo->width) && (VideoInfo->height==MaskVideoInfo->height)))  ErrorText = "InpaintLogo: Source and mask clip have different dimensions";
-  if (!(ErrorText || MaskClip || avs_is_rgb32(VideoInfo) || avs_is_planar_rgba(VideoInfo)))  ErrorText = "InpaintLogo: Mask is missing (needed if source clip is not RGB32 or RGBAP)";
-  if (GetFramePointers(nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,VideoInfo->pixel_type)-(MaskClip?0:1)<=0)  ErrorText = "InpaintLogo internal error: Color space unrecognized";
+  else if (!(avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_yv16(VideoInfo) || avs_is_yv24(VideoInfo) || avs_is_y8(VideoInfo) || avs_is_rgb32(VideoInfo) || avs_is_rgb24(VideoInfo) || avs_is_planar_rgb(VideoInfo) || avs_is_planar_rgba(VideoInfo)))  ErrorText = "InpaintLogo: Color space unknown (RGB24, RGB32, RGBP, RGBAP, YUY2, YV12/16/24/8 allowed only)";
+  else if (!(avs_has_video(VideoInfo) && VideoInfo->num_frames && VideoInfo->width && VideoInfo->height))  ErrorText = "InpaintLogo: Source clip has no video";
+  else if (MaskClip && !(avs_is_yuy2(MaskVideoInfo) || avs_is_yv12(MaskVideoInfo) || avs_is_yv16(MaskVideoInfo) || avs_is_yv24(MaskVideoInfo) || avs_is_y8(MaskVideoInfo) || avs_is_rgb32(MaskVideoInfo) || avs_is_planar_rgba(MaskVideoInfo)))  ErrorText = "InpaintLogo: Mask color space must have luma channel (YUY2, YV12/16/24, Y8) or alpha channel (RGB32, RGBAP)";
+  else if (MaskClip && !(avs_has_video(MaskVideoInfo) && MaskVideoInfo->num_frames && MaskVideoInfo->width && MaskVideoInfo->height))  ErrorText = "InpaintLogo: Mask clip has no video";
+  else if (MaskClip && !((VideoInfo->width==MaskVideoInfo->width) && (VideoInfo->height==MaskVideoInfo->height)))  ErrorText = "InpaintLogo: Source and mask clip have different dimensions";
+  else if (!(MaskClip || avs_is_rgb32(VideoInfo) || avs_is_planar_rgba(VideoInfo)))  ErrorText = "InpaintLogo: Mask is missing (needed if source clip is not RGB32 or RGBAP)";
+  else if (GetFramePointers(nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,VideoInfo->pixel_type)-(MaskClip?0:1)<=0)  ErrorText = "InpaintLogo internal error: Color space unrecognized";
 
   /* Extract values from AVS_Value container, throw errors if necessary */
   Radius = avs_is_float(avs_array_elt(Args,2))?avs_as_float(avs_array_elt(Args,2)):5.0;
@@ -360,13 +360,13 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   if (!MaskClip)  MaskClip = avs_take_clip(avs_array_elt(Args,0),Env);
   MaskVideoInfo = MaskClip?avs_get_video_info(MaskClip):nullptr;
   if (!MaskVideoInfo)  ErrorText = "InpaintLogo internal error: Opening mask clip failed";
-  if (!ErrorText)
+  else
   {
     /* Allocate data struct */
     InpaintData = new (std::nothrow) InpaintDataStruct();
     if (!InpaintData)  ErrorText = "InpaintLogo: Could not allocate memory";
   }
-  if (InpaintData)
+  if (!ErrorText)
   {
     /** Color space parameters **/
     InpaintData->ChromaChannelCount = GetFramePointers(nullptr,nullptr,nullptr,nullptr,Stride,ChromaPixelWidth,ChromaPixelHeight,VideoInfo->pixel_type)-1-(MaskClip?0:1);
@@ -921,7 +921,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   AVS_VideoFrame * LogoFrame, * AlphaFrame;
   int  LogoPixelWidth[MaxChannelCount], LogoPixelHeight[MaxChannelCount], AlphaStride[MaxChannelCount];
   AVS_FilterInfo * FilterInfo;
-  DeblendDataStruct * DeblendData;
+  DeblendDataStruct * DeblendData = nullptr;
   int  ChannelCount, ChannelNo;
   const char * ErrorText;
 
@@ -936,18 +936,17 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   /* Check if all color spaces and dimensions and so on are correct */
   ErrorText = nullptr;
   if (!(avs_has_video(SrcVideoInfo) && SrcVideoInfo->num_frames && SrcVideoInfo->width && SrcVideoInfo->height))  ErrorText = "Deblend: Source clip has no video";
-  if (!(ErrorText || avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo) || avs_is_planar_rgb(SrcVideoInfo) || avs_is_planar_rgba(SrcVideoInfo)))  ErrorText = "Deblend: Color space unknown (RGB24, RGB32, RGBP, RGBAP, YUY2, YV12/16/24/8 allowed only)";
-  if (!(ErrorText || avs_is_same_colorspace(SrcVideoInfo,LogoVideoInfo) || (avs_is_rgb(SrcVideoInfo) && avs_is_rgb(LogoVideoInfo))))  ErrorText = "Deblend: Source clip and logo clip must have same color spaces (combinations of RGB / RGBA are allowed)";
-  if (!(ErrorText || (avs_has_video(LogoVideoInfo) && LogoVideoInfo->num_frames && LogoVideoInfo->width && LogoVideoInfo->height)))  ErrorText = "Deblend: Logo clip has no video";
-  if (!(ErrorText || ((SrcVideoInfo->width==LogoVideoInfo->width) && (SrcVideoInfo->height==LogoVideoInfo->height))))  ErrorText = "Deblend: Source clip and logo clip have different dimensions";
-  if (!(ErrorText || AlphaClip || avs_is_rgb32(LogoVideoInfo) || avs_is_planar_rgba(LogoVideoInfo)))  ErrorText = "Deblend: Alpha clip is missing (needed if logo clip is not RGB32 or RGBAP)";
-  if (!(ErrorText || !AlphaClip || (avs_has_video(AlphaVideoInfo) && AlphaVideoInfo->num_frames)))  ErrorText = "Deblend: Alpha clip has no video";
-  if (!(ErrorText || !AlphaClip || avs_is_yuy2(AlphaVideoInfo) || avs_is_yv12(AlphaVideoInfo) || avs_is_yv16(AlphaVideoInfo) || avs_is_yv24(AlphaVideoInfo) || avs_is_y8(AlphaVideoInfo) || avs_is_rgb32(AlphaVideoInfo) || avs_is_planar_rgba(AlphaVideoInfo)))  ErrorText = "Deblend: Alpha color space must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGBA, RGBAP)";
-  if (!(ErrorText || !AlphaClip || ((AlphaVideoInfo->width==SrcVideoInfo->width) && (AlphaVideoInfo->height==SrcVideoInfo->height))))  ErrorText = "Deblend: Source clip and alpha clip have different dimensions";
+  else if (!(avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo) || avs_is_planar_rgb(SrcVideoInfo) || avs_is_planar_rgba(SrcVideoInfo)))  ErrorText = "Deblend: Color space unknown (RGB24, RGB32, RGBP, RGBAP, YUY2, YV12/16/24/8 allowed only)";
+  else if (!(avs_is_same_colorspace(SrcVideoInfo,LogoVideoInfo) || (avs_is_rgb(SrcVideoInfo) && avs_is_rgb(LogoVideoInfo))))  ErrorText = "Deblend: Source clip and logo clip must have same color spaces (combinations of RGB / RGBA are allowed)";
+  else if (!(avs_has_video(LogoVideoInfo) && LogoVideoInfo->num_frames && LogoVideoInfo->width && LogoVideoInfo->height))  ErrorText = "Deblend: Logo clip has no video";
+  else if (!((SrcVideoInfo->width==LogoVideoInfo->width) && (SrcVideoInfo->height==LogoVideoInfo->height)))  ErrorText = "Deblend: Source clip and logo clip have different dimensions";
+  else if (!(AlphaClip || avs_is_rgb32(LogoVideoInfo) || avs_is_planar_rgba(LogoVideoInfo)))  ErrorText = "Deblend: Alpha clip is missing (needed if logo clip is not RGB32 or RGBAP)";
+  else if (AlphaClip && !(avs_has_video(AlphaVideoInfo) && AlphaVideoInfo->num_frames))  ErrorText = "Deblend: Alpha clip has no video";
+  else if (AlphaClip && !(avs_is_yuy2(AlphaVideoInfo) || avs_is_yv12(AlphaVideoInfo) || avs_is_yv16(AlphaVideoInfo) || avs_is_yv24(AlphaVideoInfo) || avs_is_y8(AlphaVideoInfo) || avs_is_rgb32(AlphaVideoInfo) || avs_is_planar_rgba(AlphaVideoInfo)))  ErrorText = "Deblend: Alpha color space must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGBA, RGBAP)";
+  else if (AlphaClip && !((AlphaVideoInfo->width==SrcVideoInfo->width) && (AlphaVideoInfo->height==SrcVideoInfo->height)))  ErrorText = "Deblend: Source clip and alpha clip have different dimensions";
   /* Everything seems to be fine */
   /* Data structure is allocated */
-  DeblendData = nullptr;
-  if (!ErrorText)
+  else
   {
     DeblendData = new (std::nothrow) DeblendDataStruct;
     if (DeblendData)
@@ -1248,15 +1247,24 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   SrcVideoInfo = avs_get_video_info(SrcClip);
   MaskVideoInfo = MaskGiven?avs_get_video_info(MaskClip):nullptr;
   if (!(avs_has_video(SrcVideoInfo) && SrcVideoInfo->num_frames))  ErrorText = "Analyze: Source clip has no video";
-  if (!(ErrorText || avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo) || avs_is_planar_rgb(SrcVideoInfo) || avs_is_planar_rgba(SrcVideoInfo)))  ErrorText = "Analyze: Color space unknown (RGB24, RGB32, RGBP, RGBAP, YUY2, YV12/16/24/8 allowed only)";
-  if (!ErrorText && ((SrcVideoInfo->width==0) || (SrcVideoInfo->height==0) || (SrcVideoInfo->width==1 && SrcVideoInfo->height==1)))  ErrorText = "Analyze: Source clip too small";
-  if (!ErrorText && ComputeAlpha && (SrcVideoInfo->num_frames<2))  ErrorText = "Analyze: Source clip must have at least two frames for alpha computation";
-  if (!(ErrorText || MaskClip || avs_is_rgb32(SrcVideoInfo) || avs_is_planar_rgba(SrcVideoInfo)))  ErrorText = "Analyze: Mask is missing (needed if source clip is not RGB32 or RGBAP)";
-  if (!ErrorText && MaskClip && !(avs_has_video(MaskVideoInfo) && MaskVideoInfo->num_frames))  ErrorText = "Analyze: Mask clip has no video";
-  if (!ErrorText && MaskClip && !avs_is_yuy2(MaskVideoInfo) && !avs_is_yv12(MaskVideoInfo) && !avs_is_yv16(MaskVideoInfo) && !avs_is_yv24(MaskVideoInfo) && !avs_is_y8(MaskVideoInfo) && !avs_is_rgb32(MaskVideoInfo) && !avs_is_planar_rgba(MaskVideoInfo))  ErrorText = "Analyze: Mask color space must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGB32, RGBAP)";
-  if (!ErrorText && MaskClip && !(MaskVideoInfo->width==SrcVideoInfo->width && MaskVideoInfo->height==SrcVideoInfo->height))  ErrorText = "Analyze: Source clip and mask clip have different dimensions";
+  else if (!(avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo) || avs_is_planar_rgb(SrcVideoInfo) || avs_is_planar_rgba(SrcVideoInfo)))  ErrorText = "Analyze: Color space unknown (RGB24, RGB32, RGBP, RGBAP, YUY2, YV12/16/24/8 allowed only)";
+  else if ((SrcVideoInfo->width==0) || (SrcVideoInfo->height==0) || (SrcVideoInfo->width==1 && SrcVideoInfo->height==1))  ErrorText = "Analyze: Source clip too small";
+  else if (ComputeAlpha && (SrcVideoInfo->num_frames<2))  ErrorText = "Analyze: Source clip must have at least two frames for alpha computation";
+  else if (!(MaskClip || avs_is_rgb32(SrcVideoInfo) || avs_is_planar_rgba(SrcVideoInfo)))  ErrorText = "Analyze: Mask is missing (needed if source clip is not RGB32 or RGBAP)";
+  else if (MaskClip && !(avs_has_video(MaskVideoInfo) && MaskVideoInfo->num_frames))  ErrorText = "Analyze: Mask clip has no video";
+  else if (MaskClip && !avs_is_yuy2(MaskVideoInfo) && !avs_is_yv12(MaskVideoInfo) && !avs_is_yv16(MaskVideoInfo) && !avs_is_yv24(MaskVideoInfo) && !avs_is_y8(MaskVideoInfo) && !avs_is_rgb32(MaskVideoInfo) && !avs_is_planar_rgba(MaskVideoInfo))  ErrorText = "Analyze: Mask color space must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGB32, RGBAP)";
+  else if (MaskClip && !(MaskVideoInfo->width==SrcVideoInfo->width && MaskVideoInfo->height==SrcVideoInfo->height))  ErrorText = "Analyze: Source clip and mask clip have different dimensions";
   /* Done! All arguments seem to be correct */
-  /* As this filter is already done when the script is loaded, we try to deactivate all cache systems - Is this smart ? */
+  /* Attempt to disable the frame cache for source and mask clips.
+     Analyze() is a one-shot batch consumer: it walks all frames exactly once in sequential order
+     and never requests the same frame twice, so caching frames would only waste memory.
+     In classic Avisynth 2.5/2.6, calling set_cache_hints on an input clip directly was the
+     established way to suppress caching of that clip's output.
+     In Avisynth+, set_cache_hints is primarily intended to be called by a filter on itself
+     (to declare its own caching needs to the Avisynth+ cache subsystem), not on an upstream
+     input clip from within _Create.  Whether these calls have any practical effect in Avisynth+
+     is uncertain.  Avisynth+'s own LRU eviction policy should limit memory use in practice
+     because the strictly sequential, non-repeating access pattern leaves frames cold immediately. */
   if (!ErrorText)  avs_set_cache_hints(SrcClip,AVS_CACHE_NOTHING,0);
   if (!ErrorText && MaskClip)  avs_set_cache_hints(MaskClip,AVS_CACHE_NOTHING,0);
   /* Load the mask frame... */
@@ -1430,15 +1438,15 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
   ErrorText = nullptr;
   DistFcnData = nullptr;
   /* Check all video properties */
-  if (!(ErrorText || avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_yv16(VideoInfo) || avs_is_yv24(VideoInfo) || avs_is_y8(VideoInfo) || avs_is_rgb32(VideoInfo)))  ErrorText = "DistanceFunction: Source clip must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGB32)";
-  if (!(ErrorText || (avs_has_video(VideoInfo) && VideoInfo->num_frames && VideoInfo->width && VideoInfo->height)))  ErrorText = "DistanceFunction: Source clip has no video";
-  if (!ErrorText)
+  if (!(avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_yv16(VideoInfo) || avs_is_yv24(VideoInfo) || avs_is_y8(VideoInfo) || avs_is_rgb32(VideoInfo)))  ErrorText = "DistanceFunction: Source clip must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGB32)";
+  else if (!(avs_has_video(VideoInfo) && VideoInfo->num_frames && VideoInfo->width && VideoInfo->height))  ErrorText = "DistanceFunction: Source clip has no video";
+  else
   {
     /* Allocate data struct */
     DistFcnData = new (std::nothrow) DistanceFunctionDataStruct;
     if (!DistFcnData)  ErrorText = "DistanceFunction: Could not allocate memory";
   }
-  if (DistFcnData)
+  if (!ErrorText)
   {
     DistFcnData->PixelType = VideoInfo->pixel_type;
     DistFcnData->LumaChannelNo = avs_is_rgb32(VideoInfo)?3:0;
