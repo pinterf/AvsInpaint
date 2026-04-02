@@ -588,7 +588,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   AVS_VideoFrame * Frame;
   uint8_t * FrameData[MaxChannelCount], * LumaData, * ChromaDatas[MaxChannelCount-1], * ChromaData;
   int  FramePitch[MaxChannelCount], LumaPitch, * ChromaPitch;
-  int  k, x, y, PixelNo, ChannelNo;
+  int  x, y, PixelNo, ChannelNo;
   double  CoherenceStrength, CoherenceDirectionX, CoherenceDirectionY, TensorXX, TensorXY, TensorYY, Value;
   const char * ErrorText;
   /* Values given by the user */
@@ -716,6 +716,10 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   Height = MaskData->Height;
   MaskPixelCount = MaskData->MaskPixelCount;
   MaskPixelOrder = MaskData->MaskPixelOrder.data();
+  const int LumaArea   = Width * Height;
+  const int CWidth     = ChromaPixelWidth  > 0 ? Width  / ChromaPixelWidth  : 0;
+  const int CHeight    = ChromaPixelHeight > 0 ? Height / ChromaPixelHeight : 0;
+  const int ChromaArea = CWidth * CHeight;
   /* As usual, ErrorText stores a text message, if an error occured */
   ErrorText = nullptr;
   FrameData[0] = nullptr;
@@ -726,23 +730,23 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   for (ChannelNo=0 ; ChannelNo<MaxChannelCount-1 ; ChannelNo++)  GchiuChromas[ChannelNo] = nullptr;
   try
   {
-    if (InpaintData->StaticMaskData)  { chiLumaVec.resize(Width*Height);  chiLuma = chiLumaVec.data(); }
+    if (InpaintData->StaticMaskData)  { chiLumaVec.resize(LumaArea);  chiLuma = chiLumaVec.data(); }
     else  chiLuma = MaskData->chiLuma.data();
     if (LumaWeight!=0.0)
     {
-      if (InpaintData->StaticMaskData)  { GchiLumaVec.resize(Width*Height);  GchiLuma = GchiLumaVec.data(); }
+      if (InpaintData->StaticMaskData)  { GchiLumaVec.resize(LumaArea);  GchiLuma = GchiLumaVec.data(); }
       else  GchiLuma = MaskData->GchiLuma.data();
-      GchiuLumaVec.resize(Width*Height);  GchiuLuma = GchiuLumaVec.data();
+      GchiuLumaVec.resize(LumaArea);  GchiuLuma = GchiuLumaVec.data();
     }
-    if (InpaintData->StaticMaskData)  { chiChromaVec.resize(Width*Height);  chiChroma = chiChromaVec.data(); }
+    if (InpaintData->StaticMaskData)  { chiChromaVec.resize(ChromaArea);  chiChroma = chiChromaVec.data(); }
     else  chiChroma = MaskData->chiChroma.data();
     if (ChromaWeight!=0.0)
     {
-      if (InpaintData->StaticMaskData)  { GchiChromaVec.resize((Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));  GchiChroma = GchiChromaVec.data(); }
+      if (InpaintData->StaticMaskData)  { GchiChromaVec.resize(ChromaArea);  GchiChroma = GchiChromaVec.data(); }
       else  GchiChroma = MaskData->GchiChroma.data();
       for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)
       {
-        GchiuChromasVec[ChannelNo].resize((Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
+        GchiuChromasVec[ChannelNo].resize(ChromaArea);
         GchiuChromas[ChannelNo] = GchiuChromasVec[ChannelNo].data();
       }
     }
@@ -764,16 +768,18 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
   /* Prepare blurred images */
   if (InpaintData->StaticMaskData)
   {
-    std::memcpy(chiLuma,MaskData->chiLuma.data(),sizeof(uint8_t)*Width*Height);
+    std::memcpy(chiLuma,MaskData->chiLuma.data(),sizeof(uint8_t)*LumaArea);
     if(ChromaChannelCount)
-      std::memcpy(chiChroma,MaskData->chiChroma.data(),sizeof(uint8_t)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
-    if (LumaWeight!=0.0)  std::memcpy(GchiLuma,MaskData->GchiLuma.data(),sizeof(float)*Width*Height);
-    if (ChromaWeight!=0.0)  std::memcpy(GchiChroma,MaskData->GchiChroma.data(),sizeof(float)*(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight));
+      std::memcpy(chiChroma,MaskData->chiChroma.data(),sizeof(uint8_t)*ChromaArea);
+    if (LumaWeight!=0.0)  std::memcpy(GchiLuma,MaskData->GchiLuma.data(),sizeof(float)*LumaArea);
+    if (ChromaWeight!=0.0)  std::memcpy(GchiChroma,MaskData->GchiChroma.data(),sizeof(float)*ChromaArea);
   }
   if (LumaWeight!=0.0)
   {
-    for (k=0 ; k<Width*Height ; k++)  GchiuLuma[k] = 0.0;
-    for (k=0 ; k<Width*Height ; k++)  if (!chiLuma[k])  AddPreBlurValue(GchiuLuma,k%Width,k/Width,Width,Height,1.0*LumaData[LumaPitch*(k/Width)+(k%Width)*LumaStride],LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
+    std::fill(GchiuLuma, GchiuLuma+LumaArea, 0.0f);
+    for (y=0 ; y<Height ; y++)
+      for (x=0 ; x<Width ; x++)
+        if (!chiLuma[y*Width+x])  AddPreBlurValue(GchiuLuma,x,y,Width,Height,1.0*LumaData[LumaPitch*y+x*LumaStride],LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
   }
   if (ChromaWeight!=0.0)
   {
@@ -781,8 +787,10 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
     {
       GchiuChroma = GchiuChromas[ChannelNo];
       ChromaData = ChromaDatas[ChannelNo];
-      for (k=0 ; k<(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight) ; k++)  GchiuChroma[k] = 0.0;
-      for (k=0 ; k<(Width/ChromaPixelWidth)*(Height/ChromaPixelHeight) ; k++)  if (!chiChroma[k])  AddPreBlurValue(GchiuChroma,k%(Width/ChromaPixelWidth),k/(Width/ChromaPixelWidth),Width/ChromaPixelWidth,Height/ChromaPixelHeight,1.0*ChromaData[ChromaPitch[ChannelNo]*(k/(Width/ChromaPixelWidth))+(k%(Width/ChromaPixelWidth))*ChromaStride],ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
+      std::fill(GchiuChroma, GchiuChroma+ChromaArea, 0.0f);
+      for (y=0 ; y<CHeight ; y++)
+        for (x=0 ; x<CWidth ; x++)
+          if (!chiChroma[y*CWidth+x])  AddPreBlurValue(GchiuChroma,x,y,CWidth,CHeight,1.0*ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaStride],ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
     }
   }
   /** MAIN LOOP **/
@@ -829,7 +837,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
     if (!ChromaChannelCount)  continue;
     x /= ChromaPixelWidth;
     y /= ChromaPixelHeight;
-    if (chiChroma[Width/ChromaPixelWidth*y+x]==1)
+    if (chiChroma[CWidth*y+x]==1)
     {
       if (ChromaTensor)
       {
@@ -847,7 +855,7 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
       for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)
       {
         ChromaData = ChromaDatas[ChannelNo];
-        Value = InpaintPixel(ChromaRadiusX,ChromaRadiusY,ChromaData,chiChroma,ChromaStride,ChromaPitch[ChannelNo],x,y,Width/ChromaPixelWidth,Height/ChromaPixelHeight,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
+        Value = InpaintPixel(ChromaRadiusX,ChromaRadiusY,ChromaData,chiChroma,ChromaStride,ChromaPitch[ChannelNo],x,y,CWidth,CHeight,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
         if (Value<0.0)
         {
           /* When inpainting fails on a subsampled channel, then the mask (almost certainly) contains to small holes (not covered by chroma resolution). If otherwise, we have a serious problem with our code (as above in the luma case). */
@@ -876,12 +884,12 @@ AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  
           #endif
         }
         ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaStride] = static_cast<uint8_t>(Value = std::round(Value));
-        if (GchiuChromas[ChannelNo])  AddPreBlurValue(GchiuChromas[ChannelNo],x,y,Width/ChromaPixelWidth,Height/ChromaPixelHeight,Value,ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
+        if (GchiuChromas[ChannelNo])  AddPreBlurValue(GchiuChromas[ChannelNo],x,y,CWidth,CHeight,Value,ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
       }
       if (ErrorText)  break;
-      if (GchiChroma)  AddPreBlurValue(GchiChroma,x,y,Width/ChromaPixelWidth,Height/ChromaPixelHeight,1.0,ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
+      if (GchiChroma)  AddPreBlurValue(GchiChroma,x,y,CWidth,CHeight,1.0,ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
     }
-    if (chiChroma[Width/ChromaPixelWidth*y+x])  chiChroma[Width/ChromaPixelWidth*y+x]--;
+    if (chiChroma[CWidth*y+x])  chiChroma[CWidth*y+x]--;
   }
   if (!InpaintData->StaticMaskData)  InpaintPrepareMask(&MaskData,nullptr,InpaintData);
   if (ErrorText)
