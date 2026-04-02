@@ -113,6 +113,7 @@ struct FrameLayout
 #include  <cstring>
 #include  <algorithm>
 #include  <array>
+#include  <functional>
 #include  <vector>
 
 #include  "AviSynth_C.h"
@@ -219,14 +220,14 @@ struct DeblendDataStruct
   std::array<std::vector<uint8_t>, MaxChannelCount>         StaticAlphaDataChannels;
   /* Dynamic logo */
   AVS_Clip * LogoClip, * AlphaClip;
-  int  LogoPixelType, AlphaPixelType, LogoFrameCount, AlphaFrameCount, AlphaStride;
+  int  LogoPixelType, AlphaPixelType, LogoFrameCount, AlphaFrameCount, AlphaSampleStep;
   FrameLayout  logoLayout;
   bool  FlipAlpha;
   /* Is static? Check (LogoClip)     Separate alpha clip? Check (AlphaClip) */
   DeblendDataStruct() :
     PixelType(0), Width(0), Height(0), layout(),
     LogoClip(nullptr), AlphaClip(nullptr),
-    LogoPixelType(0), AlphaPixelType(0), LogoFrameCount(0), AlphaFrameCount(0), AlphaStride(0), logoLayout(),
+    LogoPixelType(0), AlphaPixelType(0), LogoFrameCount(0), AlphaFrameCount(0), AlphaSampleStep(0), logoLayout(),
     FlipAlpha(false)
   {}
 };
@@ -288,12 +289,17 @@ void  GetStructureTensor(double *  TensorXX,  double *  TensorXY,  double *  Ten
 bool  GetChannelTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,  float  Gchi[],  float  Gchiu[],  uint8_t  chi[],  int  x,  int  y,  int  Width,  int  Height,  double  BlurKernelX[],  int  BlurKernelXSize,  double  BlurKernelY[],  int  BlurKernelYSize);
 double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  double  Center);
 /* Deblend tools */
-void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height);
-void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
+void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height);
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
 void  DeblendStatic(uint8_t  Data[],  const  DoubleByte  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height);
 int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo);
 /* Analyze tools */
-int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  AVS_Clip *  SrcClip,  unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,  double  DeviationWeight,  double  SubsamplingWeight);
+int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsigned int  FrameCount,
+                 std::function<bool(unsigned int, const uint8_t*[], int[])>  fetchSrcFrame,
+                 std::function<void(unsigned int)>                           releaseSrcFrame,
+                 uint8_t *  destPlanes[],  int  destPitch[],  bool  destHasAlphaRow,
+                 unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,
+                 double  DeviationWeight,  double  SubsamplingWeight);
 
 
 
@@ -1058,9 +1064,9 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       if (AlphaClip)
       {
         const FrameLayout  alphaLayout = FrameLayoutFromPixelType(AlphaVideoInfo->pixel_type);
-        DeblendData->AlphaStride = alphaLayout.sampleStep[avs_is_rgb32(AlphaVideoInfo)?3:0];
+        DeblendData->AlphaSampleStep = alphaLayout.sampleStep[avs_is_rgb32(AlphaVideoInfo)?3:0];
       }
-      else  DeblendData->AlphaStride = DeblendData->logoLayout.sampleStep[3];  /* If this happens, LogoClip *must* be RGBA */
+      else  DeblendData->AlphaSampleStep = DeblendData->logoLayout.sampleStep[3];  /* If this happens, LogoClip *must* be RGBA */
       DeblendData->LogoClip = LogoClip;
       DeblendData->AlphaClip = AlphaClip;
     }
@@ -1139,7 +1145,7 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   const int  * FrameStride, * FramePixelWidth, * FramePixelHeight;
   int  LogoChannelCount, LogoPixelType, LogoFramePitch[MaxChannelCount];
   const int  * LogoFrameStride;
-  int  AlphaChannelCount, AlphaPixelType, AlphaFramePitch[MaxChannelCount], AlphaPitch, AlphaStride;
+  int  AlphaChannelCount, AlphaPixelType, AlphaFramePitch[MaxChannelCount], AlphaPitch, AlphaSampleStep;
   uint8_t * FrameData[MaxChannelCount];
   const  uint8_t * LogoFrameData[MaxChannelCount], * AlphaFrameData[MaxChannelCount], * AlphaData;
   int  ChannelNo;
@@ -1154,7 +1160,7 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   FramePixelWidth  = DeblendData->layout.pixelWidth;
   FramePixelHeight = DeblendData->layout.pixelHeight;
   LogoFrameStride  = DeblendData->logoLayout.sampleStep;
-  AlphaStride = DeblendData->AlphaStride;
+  AlphaSampleStep = DeblendData->AlphaSampleStep;
   Frame = avs_get_frame(FilterInfo->child,FrameNo);
   avs_make_writable(FilterInfo->env,&Frame);
   ChannelCount = AvsGetFramePlanes(Frame,DeblendData->layout,FrameData,FramePitch) ? DeblendData->layout.channelCount : 0;
@@ -1217,8 +1223,8 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   if (ChannelCount>LogoChannelCount)  ChannelCount = LogoChannelCount;
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
-    if (FramePixelWidth[ChannelNo]*FramePixelHeight[ChannelNo]==1)  DeblendDynamic(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameStride[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameStride[ChannelNo],AlphaPitch,AlphaStride,Width,Height);
-    else  DeblendDynamicSubsampled(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameStride[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameStride[ChannelNo],AlphaPitch,AlphaStride,Width,Height,FramePixelWidth[ChannelNo],FramePixelHeight[ChannelNo]);
+    if (FramePixelWidth[ChannelNo]*FramePixelHeight[ChannelNo]==1)  DeblendDynamic(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameStride[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameStride[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height);
+    else  DeblendDynamicSubsampled(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameStride[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameStride[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height,FramePixelWidth[ChannelNo],FramePixelHeight[ChannelNo]);
   }
   if (AlphaFrame)  avs_release_video_frame(AlphaFrame);
   if (LogoFrame)  avs_release_video_frame(LogoFrame);
@@ -1254,7 +1260,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   AVS_VideoFrame * MaskFrame, * DestFrame;
   AVS_FilterInfo * FilterInfo;
   const  uint8_t * MaskData;
-  int  MaskStride, MaskPitch;
+  int  MaskSampleStep, MaskPitch;
   bool  MaskGiven, ComputeAlpha;
   double  DeviationWeight, SubsamplingWeight;
   int32_t  MaskSize, AnalyzeResult;
@@ -1270,7 +1276,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   DestClip = nullptr;
   Mask = nullptr;
   MaskPitch = 0;
-  MaskStride = 0;
+  MaskSampleStep = 0;
   MaskData = nullptr;
   MaskSize = 0;
   DestFrame = nullptr;
@@ -1322,19 +1328,19 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     {
       MaskData = avs_get_read_ptr_p(MaskFrame,AVS_PLANAR_Y);
       MaskPitch = avs_get_pitch_p(MaskFrame,AVS_PLANAR_Y);
-      MaskStride = avs_is_yuy2(MaskVideoInfo)?2:1;
+      MaskSampleStep = avs_is_yuy2(MaskVideoInfo)?2:1;
     }
     else if (MaskClip && avs_is_planar_rgba(MaskVideoInfo))
     {
       MaskData = avs_get_read_ptr_p(MaskFrame,AVS_PLANAR_A);
       MaskPitch = avs_get_pitch_p(MaskFrame,AVS_PLANAR_A);
-      MaskStride = 1;
+      MaskSampleStep = 1;
     }
     else
     {
       MaskData = avs_get_read_ptr_p(MaskFrame, AVS_DEFAULT_PLANE)+3;
       MaskPitch = avs_get_pitch_p(MaskFrame, AVS_DEFAULT_PLANE);
-      MaskStride = 4;
+      MaskSampleStep = 4;
     }
     if (!MaskData)  ErrorText = "Analyze: Could not gather pixel data pointer";
   }
@@ -1368,7 +1374,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       {
         for (x=0 ; x<SrcVideoInfo->width ; x++)
         {
-          MaskSize += Mask[SrcVideoInfo->width*y+x] = ((MaskThresholdSign)*MaskData[MaskPitch*y+x*MaskStride]>(MaskThresholdSign)*(MaskThreshold));
+          MaskSize += Mask[SrcVideoInfo->width*y+x] = ((MaskThresholdSign)*MaskData[MaskPitch*y+x*MaskSampleStep]>(MaskThresholdSign)*(MaskThreshold));
         }
       }
     }
@@ -1378,7 +1384,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       {
         for (x=0 ; x<SrcVideoInfo->width ; x++)
         {
-          Mask[SrcVideoInfo->width*y+x] = MaskData[MaskPitch*y+x*MaskStride];
+          Mask[SrcVideoInfo->width*y+x] = MaskData[MaskPitch*y+x*MaskSampleStep];
           MaskSize += Mask[SrcVideoInfo->width*y+x]?1:0;
         }
       }
@@ -1399,11 +1405,39 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   /* MAIN PART: Calls core function (analyze), which evaluates all source clip frames and determines logo frame */
   if (!ErrorText)
   {
-    AnalyzeResult = Analyze(DestFrame,DestVideoInfo,SrcClip,Mask,MaskSize,ComputeAlpha,DeviationWeight,SubsamplingWeight);
-    if (AnalyzeResult==Analyze_Result_SrcClipError)  ErrorText = "Analyze: Problem while passing source clip";
-    if (AnalyzeResult==Analyze_Result_DestFrameError)  ErrorText = "Analyze: Could not write to target frame";
-    if (AnalyzeResult==Analyze_Result_MemoryError)  ErrorText = "Analyze: Could not allocate memory";
-    if (AnalyzeResult==Analyze_Result_GeneralError)  ErrorText = "Analyze: A totally strange error occured while passing the source clip";
+    const FrameLayout  srcFmt = FrameLayoutFromPixelType(SrcVideoInfo->pixel_type);
+    const bool  destHasAlphaRow = (DestVideoInfo->height > SrcVideoInfo->height);
+    uint8_t * destPlanes[MaxChannelCount] = {};
+    int  destPitch[MaxChannelCount] = {};
+    if (!AvsGetFramePlanes(DestFrame, srcFmt, destPlanes, destPitch))
+    {
+      ErrorText = "Analyze: Could not write to target frame";
+    }
+    else
+    {
+      AVS_VideoFrame * currentSrcFrame = nullptr;
+      auto fetchSrcFrame = [&](unsigned int n, const uint8_t* planes[], int pitch[]) -> bool {
+        currentSrcFrame = avs_get_frame(SrcClip, static_cast<int>(n));
+        if (!currentSrcFrame)  return  false;
+        if (!AvsGetFramePlanesRO(currentSrcFrame, srcFmt, planes, pitch))
+        {
+          avs_release_video_frame(currentSrcFrame);  currentSrcFrame = nullptr;
+          return  false;
+        }
+        return  true;
+      };
+      auto releaseSrcFrame = [&](unsigned int /*n*/) {
+        if (currentSrcFrame)  { avs_release_video_frame(currentSrcFrame);  currentSrcFrame = nullptr; }
+      };
+      AnalyzeResult = Analyze(srcFmt, SrcVideoInfo->width, SrcVideoInfo->height,
+                               static_cast<unsigned int>(SrcVideoInfo->num_frames),
+                               fetchSrcFrame, releaseSrcFrame,
+                               destPlanes, destPitch, destHasAlphaRow,
+                               Mask, MaskSize, ComputeAlpha, DeviationWeight, SubsamplingWeight);
+      if (AnalyzeResult==Analyze_Result_SrcClipError)  ErrorText = "Analyze: Problem while passing source clip";
+      if (AnalyzeResult==Analyze_Result_MemoryError)   ErrorText = "Analyze: Could not allocate memory";
+      if (AnalyzeResult==Analyze_Result_GeneralError)  ErrorText = "Analyze: A totally strange error occured while passing the source clip";
+    }
   }
   /* Release source clip */
   if (SrcClip)  avs_release_clip(SrcClip);
@@ -2432,13 +2466,13 @@ double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  d
 /****************************************************************
                         Deblend tools
  ****************************************************************/
-void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height)
+void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height)
 /* Performs a simple deblend with given logo and alpha data         */
 {
   int  x;
   double  Value;
 
-  AlphaPitch -= AlphaStride*Width;
+  AlphaPitch -= AlphaSampleStep*Width;
   LogoPitch -= LogoStride*Width;
   Pitch -= Stride*Width;
   while (Height--)
@@ -2453,7 +2487,7 @@ void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8
         if (Value<0.0)  Value = 0.0;  else  if (Value>255.0)  Value = 255.0;
         Data[0] = static_cast<uint8_t>(std::round(Value));
       }
-      AlphaData += AlphaStride;
+      AlphaData += AlphaSampleStep;
       LogoData += LogoStride;
       Data += Stride;
     }
@@ -2465,7 +2499,7 @@ void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8
 
 
 
-void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaStride,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight)
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight)
 /* Performs a simple deblend with given logo and alpha data, where
    the source and logo data are subsampled with respect to the
    alpha data.                                                      */
@@ -2473,7 +2507,7 @@ void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  co
   int  x, Alpha, TotalAlpha, xAlpha, yAlpha, AlphaBigPitch;
   double  Value;
 
-  AlphaBigPitch = AlphaPitch*PixelHeight-AlphaStride*Width;
+  AlphaBigPitch = AlphaPitch*PixelHeight-AlphaSampleStep*Width;
   TotalAlpha = PixelWidth*PixelHeight*0xFF;
   Width /= PixelWidth;
   Height /= PixelHeight;
@@ -2489,7 +2523,7 @@ void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  co
       while (xAlpha--)
       {
         for (yAlpha=0 ; yAlpha<PixelHeight ; yAlpha++)  Alpha += AlphaData[AlphaPitch*yAlpha];
-        AlphaData += AlphaStride;
+        AlphaData += AlphaSampleStep;
       }
       if (TotalAlpha-Alpha)
       {
@@ -2548,7 +2582,7 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDat
   const  uint8_t * LogoData[MaxChannelCount], * AlphaData[MaxChannelCount], * SrcData, * AlphaData0;
   uint8_t * AlphaDestData;
   DoubleByte * DestData;
-  int  LogoPitch[MaxChannelCount], AlphaPitch[MaxChannelCount], AlphaPitch0, AlphaStride0;
+  int  LogoPitch[MaxChannelCount], AlphaPitch[MaxChannelCount], AlphaPitch0, AlphaSampleStep0;
   int  ChannelNo, ChannelCount, Width, Height, x, y, x2, y2, Alpha, Logo;
 
   Width = LogoVideoInfo->width;
@@ -2563,7 +2597,7 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDat
     if (!AvsGetFramePlanesRO(AlphaFrame, alphaFmt, AlphaData, AlphaPitch))  return  -1;
     AlphaData0 = AlphaData[0];
     AlphaPitch0 = AlphaPitch[0];
-    AlphaStride0 = alphaFmt.sampleStep[0];
+    AlphaSampleStep0 = alphaFmt.sampleStep[0];
     if (avs_is_rgb32(AlphaVideoInfo))  AlphaData0 += 3;
     if (!avs_is_rgb(LogoVideoInfo) ^ !avs_is_rgb32(AlphaVideoInfo))
     {
@@ -2576,7 +2610,7 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDat
     ChannelCount--;
     AlphaData0 = LogoData[ChannelCount];
     AlphaPitch0 = LogoPitch[ChannelCount];
-    AlphaStride0 = logoFmt.sampleStep[ChannelCount];
+    AlphaSampleStep0 = logoFmt.sampleStep[ChannelCount];
   }
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
@@ -2596,7 +2630,7 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDat
         {
           for (x2=0 ; x2<PW ; x2++)
           {
-            Alpha += AlphaData0[AlphaPitch0*(PH*y+y2)+(x2+x*PW)*AlphaStride0];
+            Alpha += AlphaData0[AlphaPitch0*(PH*y+y2)+(x2+x*PW)*AlphaSampleStep0];
           }
         }
         Alpha = static_cast<int>(std::round(1.0*Alpha/PH/PW));
@@ -2615,29 +2649,28 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDat
 /****************************************************************
                       Analyze tools
  ****************************************************************/
-int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  AVS_Clip *  SrcClip,  unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,  double  DeviationWeight,  double  SubsamplingWeight)
-/* This function evaluate SrcClip and estimates the logo */
+int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsigned int  FrameCount,
+                 std::function<bool(unsigned int, const uint8_t*[], int[])>  fetchSrcFrame,
+                 std::function<void(unsigned int)>                           releaseSrcFrame,
+                 uint8_t *  destPlanes[],  int  destPitch[],  bool  destHasAlphaRow,
+                 unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,
+                 double  DeviationWeight,  double  SubsamplingWeight)
+/* This function evaluates the source frames and estimates the logo */
 {
   const unsigned int Sum1MaxDelta = 0x80u;
   const uint32_t Sum2MaxDelta = static_cast<uint32_t>(Sum1MaxDelta)*static_cast<uint32_t>(Sum1MaxDelta);
   #define  KahanAdditionMakro(S,A,C,T,Y)  {Y=(A);Y-=C;T=S+Y;C=T-S;C-=Y;S=T;}  /* Kahan's summation algorithm reduces numerical problems - hopefully compiler optimization won't destroy this */
 
-  /* Variables storing general stuff about source clip and destination frame */
-  const  AVS_VideoInfo * SrcVideoInfo;
-  int  Width, Height;
-  FrameLayout  srcFmt;
   std::array<std::vector<Analyze_Sum1Type>, MaxChannelCount> Sum1;
   std::array<std::vector<Analyze_Sum2Type>, MaxChannelCount> Sum2;
   Analyze_Sum1Type * Sum1Ptr;
   Analyze_Sum2Type * Sum2Ptr;
   int  x, y, ChannelNo, ChannelCount;
-  unsigned int  FrameCount;
   int32_t  k;
   double  ChannelNMVariance[MaxChannelCount], ChannelNMAverage[MaxChannelCount];
   int  Result;
-  int  FramePitch[MaxChannelCount];
+  int  FramePitch[MaxChannelCount];  /* used in Phase 1 for source frame pitches */
   /* Variables for Phase 1 */
-  AVS_VideoFrame * SrcFrame;
   unsigned int  FrameNo, FramesLeft;
   Analyze_Sum1Type  Sum1Max;
   Analyze_Sum2Type  Sum2Max;
@@ -2664,22 +2697,12 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
      Not needed for RGB or YV24 where all channels share the same resolution as the luma/alpha. */
   std::vector<float> ChannelAlphaVector;
   double  PixelValue, AlphaSum, AlphaWeightSum, AlphaWeight[MaxChannelCount];
-  uint8_t * DestData[MaxChannelCount];
   uint8_t * AlphaData, * DestPtr;
-  int  AlphaPitch, AlphaStride;
+  int  AlphaPitch, AlphaSampleStep;
 
 
   /*** PHASE 0 :  Allocating memory ***/
-  /* First check some assertions and store basic video parameters */
-  if (!(SrcClip && DestFrame))  return  Analyze_Result_GeneralError;
-  SrcVideoInfo = avs_get_video_info(SrcClip);
-  if (!SrcVideoInfo)  return  Analyze_Result_SrcClipError;
-  if (SrcVideoInfo->pixel_type!=DestVideoInfo->pixel_type)  return  Analyze_Result_GeneralError;
-  Width = SrcVideoInfo->width;
-  Height = SrcVideoInfo->height;
-  FrameCount = SrcVideoInfo->num_frames;
-  srcFmt = FrameLayoutFromPixelType(SrcVideoInfo->pixel_type);
-  ChannelCount = srcFmt.channelCount-(DestVideoInfo->height>SrcVideoInfo->height?0:1);
+  ChannelCount = srcFmt.channelCount - (destHasAlphaRow ? 0 : 1);
   /* Allocate memory for sum and square-sum vectors (depending on color space) */
   if (ChannelCount<=0)  return  Analyze_Result_GeneralError;  /* Unknown color space (a bug!) */
   try
@@ -2690,7 +2713,6 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   }
   catch (std::bad_alloc&)  { return  Analyze_Result_MemoryError; }
   /*** PHASE 1: Summing up (over time) all pixel values and their squares (Dear user: this will take some time!!) ***/
-  SrcFrame = nullptr;
   // This ensures no individual accumulator cell overflows regardless of resolution,
   // each cell accumulates exactly FramesLeft values, bounded by INT32_MAX/UINT32_MAX limits.
   FramesLeft = FrameCount;
@@ -2702,12 +2724,9 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   /* This loops over all frames of the source clip */
   while (FramesLeft)
   {
-    /* Get source frame... */
-    SrcFrame = avs_get_frame(SrcClip,FrameNo);
-    /* ...and data pointers... */
-    if (!AvsGetFramePlanesRO(SrcFrame, srcFmt, SrcData, FramePitch))
+    /* Get source frame and data pointers via callback */
+    if (!fetchSrcFrame(FrameNo, SrcData, FramePitch))
     {
-      /* ...and quit loop, if problem occured */
       Result = Analyze_Result_SrcClipError;
       break;
     }
@@ -2751,8 +2770,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       }
     }
     /* Release source frame */
-    avs_release_video_frame(SrcFrame);
-    SrcFrame = nullptr;
+    releaseSrcFrame(FrameNo);
     FramesLeft--;
     FrameNo++;
     if (!FramesLeft && (FrameNo!=FrameCount))
@@ -2774,8 +2792,8 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       if (FramesLeft>static_cast<unsigned int>((Analyze_Sum1Max-Sum1Max)/Sum1MaxDelta))  FramesLeft = static_cast<unsigned int>((Analyze_Sum1Max-Sum1Max)/Sum1MaxDelta);
     }
   }
-  /* If (whyever) there is still a SrcFrame, we release it */
-  if (SrcFrame)  avs_release_video_frame(SrcFrame);
+  /* If (whyever) there is still an unreleased frame, release it now */
+  releaseSrcFrame(FrameNo);
   /* If we have less than two frames, we return an error (maybe Sum1/2Max is too low..??) */
   if (ComputeAlpha)  if (FrameNo<2)  Result = Analyze_Result_GeneralError;
   if (FrameNo<1)  Result = Analyze_Result_GeneralError;
@@ -2970,27 +2988,25 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
   for (auto& v : Sum2)  { v.clear(); v.shrink_to_fit(); }
   /** The destination frame pointers are determined **/
   /* Now we're approaching color-space dependent code !! */
-  if (!AvsGetFramePlanes(DestFrame, srcFmt, DestData, FramePitch))
-    return  Analyze_Result_DestFrameError;
-  if (avs_is_yuv(SrcVideoInfo))
+  if (srcFmt.colorFamily != ColorFamily::RGB)  /* YUV or Gray */
   {
-    AlphaData = DestData[0]+Height*FramePitch[0];
-    AlphaPitch = FramePitch[0];
-    AlphaStride = srcFmt.sampleStep[0];
+    AlphaData = destPlanes[0]+Height*destPitch[0];
+    AlphaPitch = destPitch[0];
+    AlphaSampleStep = srcFmt.sampleStep[0];
   }
   else
   {
-    AlphaData = DestData[(DestVideoInfo->height>SrcVideoInfo->height)?0:3];  /* For RGB24 we have to copy the alpha values to the green and blue channel later ! */
-    if (DestVideoInfo->height>SrcVideoInfo->height)  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  DestData[ChannelNo] += Height*FramePitch[ChannelNo];
-    AlphaPitch = FramePitch[0];
-    AlphaStride = srcFmt.sampleStep[0];
+    AlphaData = destPlanes[destHasAlphaRow ? 0 : 3];  /* For RGB24 we have to copy the alpha values to the green and blue channel later ! */
+    if (destHasAlphaRow)  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  destPlanes[ChannelNo] += Height*destPitch[ChannelNo];
+    AlphaPitch = destPitch[0];
+    AlphaSampleStep = srcFmt.sampleStep[0];
   }
   /** The alpha channel is stored in the destination frame **/
   for (y=0 ; y<Height ; y++)
   {
     for(x=0 ; x<Width ; x++)
     {
-      AlphaData[y*AlphaPitch+x*AlphaStride] = static_cast<uint8_t>(std::round(AlphaChannel[Width*y+x]*0xFF));  /* 0=transparent 255=opaque */
+      AlphaData[y*AlphaPitch+x*AlphaSampleStep] = static_cast<uint8_t>(std::round(AlphaChannel[Width*y+x]*0xFF));  /* 0=transparent 255=opaque */
     }
   }
   /** Now we compute the color channels **/
@@ -3038,7 +3054,7 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
       }
     }
     Sum1Ptr = Sum1[ChannelNo].data();
-    DestPtr = DestData[ChannelNo];
+    DestPtr = destPlanes[ChannelNo];
     for (y=0 ; y<ChHeight ; y++)
     {
       for (x=0 ; x<ChWidth ; x++)
@@ -3050,43 +3066,42 @@ int32_t  Analyze(AVS_VideoFrame *  DestFrame,  AVS_VideoInfo * DestVideoInfo,  A
         if (PixelValue<0x00)  PixelValue = 0x00;
         if (PixelValue>0xFF)  PixelValue = 0xFF;
         if (!(PixelValue<0x100))  PixelValue = 0x80;
-        DestPtr[FramePitch[ChannelNo]*y+x*srcFmt.sampleStep[ChannelNo]] = static_cast<uint8_t>(std::round(PixelValue));
+        DestPtr[destPitch[ChannelNo]*y+x*srcFmt.sampleStep[ChannelNo]] = static_cast<uint8_t>(std::round(PixelValue));
       }
     }
   }
-  if (DestVideoInfo->height>SrcVideoInfo->height)
+  if (destHasAlphaRow)
   {
-    if (avs_is_yuv(SrcVideoInfo))
+    if (srcFmt.colorFamily != ColorFamily::RGB)  /* YUV or Gray: clear chroma of the alpha-row area */
     {
-      /* Clear chroma of mask part */
       for (ChannelNo=1 ; ChannelNo<ChannelCount ; ChannelNo++)
       {
-        DestPtr = DestData[ChannelNo]+(Height/srcFmt.pixelHeight[ChannelNo])*FramePitch[ChannelNo];
+        DestPtr = destPlanes[ChannelNo]+(Height/srcFmt.pixelHeight[ChannelNo])*destPitch[ChannelNo];
         for (y=0 ; y<Height/srcFmt.pixelHeight[ChannelNo] ; y++)
         {
           for (x=0 ; x<Width/srcFmt.pixelWidth[ChannelNo] ; x++)
           {
-            DestPtr[FramePitch[ChannelNo]*y+x*srcFmt.sampleStep[ChannelNo]] = 0x80;  /* No color I hope */
+            DestPtr[destPitch[ChannelNo]*y+x*srcFmt.sampleStep[ChannelNo]] = 0x80;  /* No color I hope */
           }
         }
       }
     }
-    if (avs_is_rgb(SrcVideoInfo))
+    if (srcFmt.colorFamily == ColorFamily::RGB)
     {
       for (y=0 ; y<Height ; y++)
       {
         for (x=0 ; x<Width ; x++)
         {
-          AlphaData[y*AlphaPitch+x*AlphaStride+2] = AlphaData[y*AlphaPitch+x*AlphaStride+1] = AlphaData[y*AlphaPitch+x*AlphaStride];
+          AlphaData[y*AlphaPitch+x*AlphaSampleStep+2] = AlphaData[y*AlphaPitch+x*AlphaSampleStep+1] = AlphaData[y*AlphaPitch+x*AlphaSampleStep];
         }
       }
-      if (avs_is_rgb32(SrcVideoInfo))
+      if (srcFmt.colorFamily == ColorFamily::RGB && srcFmt.sampleStep[0] == 4)  /* packed RGB32 */
       {
         for (y=0 ; y<Height ; y++)
         {
           for (x=0 ; x<Width ; x++)
           {
-            AlphaData[y*AlphaPitch+x*AlphaStride+3] = 0;
+            AlphaData[y*AlphaPitch+x*AlphaSampleStep+3] = 0;
           }
         }
       }
