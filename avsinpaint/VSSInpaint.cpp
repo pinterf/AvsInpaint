@@ -1,7 +1,6 @@
 // VSSInpaint.cpp  —  VapourSynth V4 wrapper for AvsInPaint
 // Implements InpaintLogo and AnalyzeLogo using the pure-pointer core from AVSInpaint.cpp.
-// DeblendLogo is not implemented for VapourSynth (relies on AVS-specific frame management
-// that has not yet been decoupled).  DistanceFunction is implemented below.
+// Both DistanceFunction and DeblendLogo are implemented below.
 
 #include  "InpaintCore.h"
 #include  "vs/VapourSynth4.h"
@@ -688,6 +687,305 @@ static void  VS_CC  vsAnalyzeCreate(const VSMap *  in,  VSMap *  out,  void *  /
 
 
 /******************************************************************
+                    DeblendLogo (VS4)
+ ******************************************************************/
+
+struct VSDeblendData
+{
+  VSNode * srcNode;
+  VSNode * logoNode;   /* non-null in dynamic mode */
+  VSNode * alphaNode;  /* non-null if separate alpha clip provided */
+  int  Width, Height;
+  FrameLayout  layout;      /* src format */
+  FrameLayout  logoLayout;  /* logo format */
+  int  logoFrameCount, alphaFrameCount;
+  /* Static logo storage (populated at creation when logo has 1 frame) */
+  std::array<std::vector<DoubleByte>, MaxChannelCount>  StaticLogoDataChannels;
+  std::array<std::vector<uint8_t>, MaxChannelCount>     StaticAlphaDataChannels;
+};
+
+
+/* Returns the effective alpha plane pointer: A-plane (index 3) for RGBA, plane 0 otherwise. */
+static void  VsGetDeblendAlphaPtr(const VSFrame *  alphaFrame,  const FrameLayout &  alphaFmt,
+                                   const VSAPI *  vsapi,
+                                   const uint8_t *&  alphaData,  int &  alphaPitch)
+{
+  const int  planeIdx = (alphaFmt.colorFamily == ColorFamily::RGB && alphaFmt.channelCount == 4) ? 3 : 0;
+  alphaData  = vsapi->getReadPtr(alphaFrame, planeIdx);
+  alphaPitch = static_cast<int>(vsapi->getStride(alphaFrame, planeIdx));
+}
+
+
+static const VSFrame *  VS_CC  vsDeblendGetFrame(int  n,  int  activationReason,  void *  instanceData,  void **  /*frameData*/,  VSFrameContext *  frameCtx,  VSCore *  core,  const VSAPI *  vsapi)
+{
+  VSDeblendData * d = static_cast<VSDeblendData*>(instanceData);
+  const bool  isStatic = (d->logoNode == nullptr);
+
+  if (activationReason == arInitial)
+  {
+    vsapi->requestFrameFilter(n, d->srcNode, frameCtx);
+    if (!isStatic)
+    {
+      vsapi->requestFrameFilter((n < d->logoFrameCount) ? n : (d->logoFrameCount - 1), d->logoNode, frameCtx);
+      if (d->alphaNode)
+        vsapi->requestFrameFilter((n < d->alphaFrameCount) ? n : (d->alphaFrameCount - 1), d->alphaNode, frameCtx);
+    }
+    return  nullptr;
+  }
+  if (activationReason != arAllFramesReady)  return  nullptr;
+
+  const VSFrame * srcFrame = vsapi->getFrameFilter(n, d->srcNode, frameCtx);
+  VSFrame * dstFrame = vsapi->copyFrame(srcFrame, core);
+  vsapi->freeFrame(srcFrame);
+
+  if (isStatic)
+  {
+    uint8_t * FrameData[MaxChannelCount] = {};
+    int  FramePitch[MaxChannelCount] = {};
+    VsGetFramePlanes(dstFrame, d->layout, FrameData, FramePitch, vsapi);
+    uint8_t * AlphaData = nullptr;
+    for (int ch = 0 ; ch < MaxChannelCount ; ch++)
+    {
+      if (d->StaticLogoDataChannels[ch].empty())  break;
+      if (!d->StaticAlphaDataChannels[ch].empty())  AlphaData = d->StaticAlphaDataChannels[ch].data();
+      DeblendStatic(FrameData[ch], d->StaticLogoDataChannels[ch].data(), AlphaData,
+        FramePitch[ch], d->layout.sampleStep[ch],
+        d->Width / d->layout.pixelWidth[ch], d->Height / d->layout.pixelHeight[ch]);
+    }
+  }
+  else
+  {
+    const int  logoN  = (n < d->logoFrameCount)  ? n : (d->logoFrameCount  - 1);
+    const int  alphaN = (n < d->alphaFrameCount) ? n : (d->alphaFrameCount - 1);
+
+    const VSFrame * logoFrame  = vsapi->getFrameFilter(logoN, d->logoNode, frameCtx);
+    const VSFrame * alphaFrame = d->alphaNode ? vsapi->getFrameFilter(alphaN, d->alphaNode, frameCtx) : nullptr;
+
+    uint8_t * FrameData[MaxChannelCount] = {};
+    int  FramePitch[MaxChannelCount] = {};
+    const uint8_t * LogoData[MaxChannelCount] = {};
+    int  LogoPitch[MaxChannelCount] = {};
+    VsGetFramePlanes(dstFrame, d->layout, FrameData, FramePitch, vsapi);
+    VsGetFramePlanesRO(logoFrame, d->logoLayout, LogoData, LogoPitch, vsapi);
+
+    const uint8_t * alphaData;
+    int  alphaPitch;
+    if (alphaFrame)
+    {
+      const FrameLayout  alphaFmt = FrameLayoutFromVSFormat(*vsapi->getVideoFrameFormat(alphaFrame));
+      VsGetDeblendAlphaPtr(alphaFrame, alphaFmt, vsapi, alphaData, alphaPitch);
+    }
+    else
+    {
+      /* Alpha embedded in last logo channel */
+      const int  lastCh = d->logoLayout.channelCount - 1;
+      alphaData  = LogoData[lastCh];
+      alphaPitch = LogoPitch[lastCh];
+    }
+
+    /* VS4 is always planar: alphaSampleStep == 1 */
+    const int  alphaSampleStep = 1;
+    int  ChannelCount = d->layout.channelCount;
+    const int  logoChannelCount = alphaFrame ? d->logoLayout.channelCount : d->logoLayout.channelCount - 1;
+    if (ChannelCount > logoChannelCount)  ChannelCount = logoChannelCount;
+
+    for (int ch = 0 ; ch < ChannelCount ; ch++)
+    {
+      if (d->layout.pixelWidth[ch] * d->layout.pixelHeight[ch] == 1)
+        DeblendDynamic(FrameData[ch], LogoData[ch], alphaData,
+          FramePitch[ch], d->layout.sampleStep[ch],
+          LogoPitch[ch], d->logoLayout.sampleStep[ch],
+          alphaPitch, alphaSampleStep, d->Width, d->Height);
+      else
+        DeblendDynamicSubsampled(FrameData[ch], LogoData[ch], alphaData,
+          FramePitch[ch], d->layout.sampleStep[ch],
+          LogoPitch[ch], d->logoLayout.sampleStep[ch],
+          alphaPitch, alphaSampleStep, d->Width, d->Height,
+          d->layout.pixelWidth[ch], d->layout.pixelHeight[ch]);
+    }
+
+    if (alphaFrame)  vsapi->freeFrame(alphaFrame);
+    vsapi->freeFrame(logoFrame);
+  }
+  return  dstFrame;
+}
+
+
+static void  VS_CC  vsDeblendFree(void *  instanceData,  VSCore *  /*core*/,  const VSAPI *  vsapi)
+{
+  VSDeblendData * d = static_cast<VSDeblendData*>(instanceData);
+  vsapi->freeNode(d->srcNode);
+  if (d->logoNode)   vsapi->freeNode(d->logoNode);
+  if (d->alphaNode)  vsapi->freeNode(d->alphaNode);
+  delete d;
+}
+
+
+static void  VS_CC  vsDeblendCreate(const VSMap *  in,  VSMap *  out,  void *  /*userData*/,  VSCore *  core,  const VSAPI *  vsapi)
+{
+  int  err;
+  const char * ErrorText = nullptr;
+
+  VSNode * srcNode   = vsapi->mapGetNode(in, "clip",  0, nullptr);
+  VSNode * logoNode  = vsapi->mapGetNode(in, "logo",  0, nullptr);
+  VSNode * alphaNode = vsapi->mapGetNode(in, "alpha", 0, &err);
+  if (err)  alphaNode = nullptr;
+
+  const VSVideoInfo * srcVI   = vsapi->getVideoInfo(srcNode);
+  const VSVideoInfo * logoVI  = vsapi->getVideoInfo(logoNode);
+  const VSVideoInfo * alphaVI = alphaNode ? vsapi->getVideoInfo(alphaNode) : nullptr;
+
+  if (!srcVI->format.colorFamily)
+    ErrorText = "DeblendLogo: Source clip has variable format (not supported)";
+  else if (srcVI->format.bitsPerSample != 8 || srcVI->format.sampleType != stInteger)
+    ErrorText = "DeblendLogo: Only 8-bit integer formats are supported";
+  else if (!srcVI->width || !srcVI->height || !srcVI->numFrames)
+    ErrorText = "DeblendLogo: Source clip has no video";
+  else if (!logoVI->format.colorFamily)
+    ErrorText = "DeblendLogo: Logo clip has variable format (not supported)";
+  else if (logoVI->format.bitsPerSample != 8 || logoVI->format.sampleType != stInteger)
+    ErrorText = "DeblendLogo: Logo clip must be 8-bit integer";
+  else if (logoVI->format.colorFamily != srcVI->format.colorFamily ||
+           logoVI->format.subSamplingW != srcVI->format.subSamplingW ||
+           logoVI->format.subSamplingH != srcVI->format.subSamplingH)
+    ErrorText = "DeblendLogo: Source and logo clips must have matching color family and subsampling";
+  else if (logoVI->width != srcVI->width || logoVI->height != srcVI->height)
+    ErrorText = "DeblendLogo: Source and logo clips have different dimensions";
+  else if (!alphaNode && logoVI->format.numPlanes < 4)
+    ErrorText = "DeblendLogo: Alpha clip is missing (required when logo clip has no embedded alpha channel)";
+  else if (alphaVI)
+  {
+    if (!alphaVI->format.colorFamily)
+      ErrorText = "DeblendLogo: Alpha clip has variable format (not supported)";
+    else if (alphaVI->format.bitsPerSample != 8 || alphaVI->format.sampleType != stInteger)
+      ErrorText = "DeblendLogo: Alpha clip must be 8-bit integer";
+    else if (alphaVI->width != srcVI->width || alphaVI->height != srcVI->height)
+      ErrorText = "DeblendLogo: Source and alpha clips have different dimensions";
+  }
+
+  if (ErrorText)
+  {
+    vsapi->mapSetError(out, ErrorText);
+    vsapi->freeNode(srcNode);
+    vsapi->freeNode(logoNode);
+    if (alphaNode)  vsapi->freeNode(alphaNode);
+    return;
+  }
+
+  VSDeblendData * d = new (std::nothrow) VSDeblendData{};
+  if (!d)
+  {
+    vsapi->mapSetError(out, "DeblendLogo: Could not allocate memory");
+    vsapi->freeNode(srcNode);
+    vsapi->freeNode(logoNode);
+    if (alphaNode)  vsapi->freeNode(alphaNode);
+    return;
+  }
+
+  d->srcNode        = srcNode;
+  d->Width          = srcVI->width;
+  d->Height         = srcVI->height;
+  d->layout         = FrameLayoutFromVSFormat(srcVI->format);
+  d->logoLayout     = FrameLayoutFromVSFormat(logoVI->format);
+  d->logoFrameCount = logoVI->numFrames;
+  d->alphaFrameCount = alphaVI ? alphaVI->numFrames : 0;
+
+  const bool  isStatic = (logoVI->numFrames == 1) && (!alphaNode || alphaVI->numFrames == 1);
+
+  if (isStatic)
+  {
+    char errMsg[256];
+    const VSFrame * logoFrame  = vsapi->getFrame(0, logoNode,  errMsg, sizeof(errMsg));
+    const VSFrame * alphaFrame = alphaNode ? vsapi->getFrame(0, alphaNode, errMsg, sizeof(errMsg)) : nullptr;
+
+    if (!logoFrame || (alphaNode && !alphaFrame))
+      ErrorText = "DeblendLogo: Could not get logo/alpha frame";
+
+    if (!ErrorText)
+    {
+      const int  logoChannelCount = alphaNode ? d->logoLayout.channelCount : d->logoLayout.channelCount - 1;
+      try
+      {
+        for (int ch = 0 ; ch < logoChannelCount ; ch++)
+          d->StaticLogoDataChannels[ch].resize(srcVI->width * srcVI->height
+            / d->logoLayout.pixelWidth[ch] / d->logoLayout.pixelHeight[ch]);
+        d->StaticAlphaDataChannels[0].resize(srcVI->width * srcVI->height);
+        if (d->layout.colorFamily == ColorFamily::YUV)
+          d->StaticAlphaDataChannels[1].resize(srcVI->width * srcVI->height);
+      }
+      catch (std::bad_alloc &)  { ErrorText = "DeblendLogo: Could not allocate memory"; }
+    }
+
+    if (!ErrorText)
+    {
+      const uint8_t * logoPlanes[MaxChannelCount] = {};
+      int  logoPitch[MaxChannelCount] = {};
+      VsGetFramePlanesRO(logoFrame, d->logoLayout, logoPlanes, logoPitch, vsapi);
+
+      DoubleByte * logoPtrs[MaxChannelCount] = {};
+      uint8_t *    alphaPtrs[MaxChannelCount] = {};
+      for (int ch = 0 ; ch < MaxChannelCount ; ch++)
+      {
+        logoPtrs[ch]  = d->StaticLogoDataChannels[ch].empty() ? nullptr : d->StaticLogoDataChannels[ch].data();
+        alphaPtrs[ch] = d->StaticAlphaDataChannels[ch].empty() ? nullptr : d->StaticAlphaDataChannels[ch].data();
+      }
+
+      const uint8_t * alphaPlane = nullptr;
+      int  alphaPitch = 0;
+      if (alphaFrame)
+      {
+        const FrameLayout  alphaFmt = FrameLayoutFromVSFormat(*vsapi->getVideoFrameFormat(alphaFrame));
+        VsGetDeblendAlphaPtr(alphaFrame, alphaFmt, vsapi, alphaPlane, alphaPitch);
+      }
+
+      /* VS4 is always planar: alphaSampleStep == 1 */
+      if (0 > DeblendStaticPrepare(logoPtrs, alphaPtrs,
+                                    d->logoLayout, srcVI->width, srcVI->height,
+                                    logoPlanes, logoPitch,
+                                    alphaPlane, alphaPitch, 1))
+        ErrorText = "DeblendLogo: Could not gather logo frame data";
+    }
+
+    if (logoFrame)   vsapi->freeFrame(logoFrame);
+    if (alphaFrame)  vsapi->freeFrame(alphaFrame);
+    /* Static mode: logo/alpha nodes no longer needed after creation */
+    vsapi->freeNode(logoNode);
+    if (alphaNode)  vsapi->freeNode(alphaNode);
+    d->logoNode  = nullptr;
+    d->alphaNode = nullptr;
+  }
+  else
+  {
+    d->logoNode  = logoNode;
+    d->alphaNode = alphaNode;
+  }
+
+  if (ErrorText)
+  {
+    vsapi->mapSetError(out, ErrorText);
+    if (d->logoNode)   vsapi->freeNode(d->logoNode);
+    if (d->alphaNode)  vsapi->freeNode(d->alphaNode);
+    vsapi->freeNode(d->srcNode);
+    delete d;
+    return;
+  }
+
+  VSFilterDependency deps[3];
+  int  numDeps = 1;
+  deps[0] = { d->srcNode, rpStrictSpatial };
+  if (d->logoNode)
+  {
+    deps[numDeps++] = { d->logoNode,  d->logoFrameCount  > 1 ? rpStrictSpatial : rpNoFrameReuse };
+    if (d->alphaNode)
+      deps[numDeps++] = { d->alphaNode, d->alphaFrameCount > 1 ? rpStrictSpatial : rpNoFrameReuse };
+  }
+
+  vsapi->createVideoFilter(out, "DeblendLogo", srcVI, vsDeblendGetFrame, vsDeblendFree,
+    fmParallel, deps, numDeps, d, core);
+}
+
+
+/******************************************************************
                   DistanceFunction (VS4)
  ******************************************************************/
 
@@ -828,4 +1126,9 @@ VS_EXTERNAL_API(void)  VapourSynthPluginInit2(VSPlugin *  plugin,  const VSPLUGI
     "clip:vnode;scale:float:opt;pixelaspect:float:opt;",
     "clip:vnode;",
     vsDistanceFunctionCreate, nullptr, plugin);
+
+  vspapi->registerFunction("DeblendLogo",
+    "clip:vnode;logo:vnode;alpha:vnode:opt;",
+    "clip:vnode;",
+    vsDeblendCreate, nullptr, plugin);
 }
