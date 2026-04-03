@@ -1,7 +1,7 @@
 // VSSInpaint.cpp  —  VapourSynth V4 wrapper for AvsInPaint
 // Implements InpaintLogo and AnalyzeLogo using the pure-pointer core from AVSInpaint.cpp.
-// DeblendLogo and DistanceFunction are not implemented for VapourSynth (they rely on
-// AVS-specific frame memory management that has not yet been decoupled).
+// DeblendLogo is not implemented for VapourSynth (relies on AVS-specific frame management
+// that has not yet been decoupled).  DistanceFunction is implemented below.
 
 #include  "InpaintCore.h"
 #include  "vs/VapourSynth4.h"
@@ -688,6 +688,119 @@ static void  VS_CC  vsAnalyzeCreate(const VSMap *  in,  VSMap *  out,  void *  /
 
 
 /******************************************************************
+                  DistanceFunction (VS4)
+ ******************************************************************/
+
+struct VSDistanceFunctionData
+{
+  VSNode *  srcNode;
+  int       Width, Height, LumaChannelNo, SampleStep;
+  double    Scale, PixelWidth, PixelHeight;
+  int       ScaleSign;
+};
+
+
+static const VSFrame *  VS_CC  vsDistanceFunctionGetFrame(int  n,  int  activationReason,  void *  instanceData,  void **  /*frameData*/,  VSFrameContext *  frameCtx,  VSCore *  core,  const VSAPI *  vsapi)
+{
+  VSDistanceFunctionData * d = static_cast<VSDistanceFunctionData*>(instanceData);
+  if (activationReason == arInitial)
+  {
+    vsapi->requestFrameFilter(n, d->srcNode, frameCtx);
+    return  nullptr;
+  }
+  if (activationReason != arAllFramesReady)  return  nullptr;
+
+  const VSFrame * srcFrame = vsapi->getFrameFilter(n, d->srcNode, frameCtx);
+  VSFrame * dstFrame = vsapi->copyFrame(srcFrame, core);
+  vsapi->freeFrame(srcFrame);
+
+  uint8_t * data  = vsapi->getWritePtr(dstFrame, d->LumaChannelNo);
+  int       pitch = static_cast<int>(vsapi->getStride(dstFrame, d->LumaChannelNo));
+
+  const char * ErrorText = DistanceFunctionCore(data, pitch, d->SampleStep,
+    d->Width, d->Height, d->Scale, d->ScaleSign, d->PixelWidth, d->PixelHeight);
+
+  if (ErrorText)
+  {
+    vsapi->freeFrame(dstFrame);
+    vsapi->setFilterError(ErrorText, frameCtx);
+    return  nullptr;
+  }
+  return  dstFrame;
+}
+
+
+static void  VS_CC  vsDistanceFunctionFree(void *  instanceData,  VSCore *  /*core*/,  const VSAPI *  vsapi)
+{
+  VSDistanceFunctionData * d = static_cast<VSDistanceFunctionData*>(instanceData);
+  vsapi->freeNode(d->srcNode);
+  delete d;
+}
+
+
+static void  VS_CC  vsDistanceFunctionCreate(const VSMap *  in,  VSMap *  out,  void *  /*userData*/,  VSCore *  core,  const VSAPI *  vsapi)
+{
+  int  err;
+  const char * ErrorText = nullptr;
+
+  VSNode * srcNode = vsapi->mapGetNode(in, "clip", 0, nullptr);
+  const VSVideoInfo * srcVI = vsapi->getVideoInfo(srcNode);
+
+  double Scale = vsapi->mapGetFloat(in, "scale",       0, &err);  if (err) Scale = 1.0;
+  double PAR   = vsapi->mapGetFloat(in, "pixelaspect", 0, &err);  if (err) PAR   = 1.0;
+
+  if (!srcVI->format.colorFamily)
+    ErrorText = "DistanceFunction: Source clip has variable format (not supported)";
+  else if (srcVI->format.bitsPerSample != 8 || srcVI->format.sampleType != stInteger)
+    ErrorText = "DistanceFunction: Only 8-bit integer formats are supported";
+  else if (srcVI->format.colorFamily == cfRGB)
+    ErrorText = "DistanceFunction: RGB clips are not supported; use a grayscale or YUV clip";
+  else if (!srcVI->width || !srcVI->height || !srcVI->numFrames)
+    ErrorText = "DistanceFunction: Source clip has no video";
+  else if (PAR <= 0.0)
+    ErrorText = "DistanceFunction: Pixel aspect ratio must be positive";
+
+  if (ErrorText)
+  {
+    vsapi->mapSetError(out, ErrorText);
+    vsapi->freeNode(srcNode);
+    return;
+  }
+
+  VSDistanceFunctionData * d = new (std::nothrow) VSDistanceFunctionData{};
+  if (!d)
+  {
+    vsapi->mapSetError(out, "DistanceFunction: Could not allocate memory");
+    vsapi->freeNode(srcNode);
+    return;
+  }
+
+  d->srcNode       = srcNode;
+  d->Width         = srcVI->width;
+  d->Height        = srcVI->height;
+  d->LumaChannelNo = 0;  /* plane 0 = luma (YUV) or gray */
+  d->SampleStep    = 1;  /* VS4 is always planar */
+  d->ScaleSign     = (Scale >= 0.0) ? (+1) : (-1);
+  if (PAR > 1.0)
+  {
+    d->PixelWidth  = 1.0;
+    d->PixelHeight = 1.0 / PAR;
+    d->Scale       = std::fabs(Scale) * std::sqrt(PAR);
+  }
+  else
+  {
+    d->PixelWidth  = PAR;
+    d->PixelHeight = 1.0;
+    d->Scale       = std::fabs(Scale) / std::sqrt(PAR);
+  }
+
+  VSFilterDependency deps[] = { { srcNode, rpStrictSpatial } };
+  vsapi->createVideoFilter(out, "DistanceFunction", srcVI, vsDistanceFunctionGetFrame, vsDistanceFunctionFree,
+    fmParallel, deps, 1, d, core);
+}
+
+
+/******************************************************************
                       Plugin entry point
  ******************************************************************/
 
@@ -710,4 +823,9 @@ VS_EXTERNAL_API(void)  VapourSynthPluginInit2(VSPlugin *  plugin,  const VSPLUGI
     "computealpha:int:opt;deviationweight:float:opt;subsamplingweight:float:opt;",
     "clip:vnode;",
     vsAnalyzeCreate, nullptr, plugin);
+
+  vspapi->registerFunction("DistanceFunction",
+    "clip:vnode;scale:float:opt;pixelaspect:float:opt;",
+    "clip:vnode;",
+    vsDistanceFunctionCreate, nullptr, plugin);
 }
