@@ -660,7 +660,8 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
       Value = 1.0*LumaData[LumaPitch*y+x*LumaStride];
       #endif
     }
-    LumaData[LumaPitch*y+x*LumaStride] = static_cast<uint8_t>(Value = std::round(Value));
+    Value = std::round(Value); // value is still double here
+    LumaData[LumaPitch*y+x*LumaStride] = static_cast<uint8_t>(Value);
     if (GchiuLuma)  AddPreBlurValue(GchiuLuma,x,y,Width,Height,Value,LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
     if (GchiLuma)  AddPreBlurValue(GchiLuma,x,y,Width,Height,1.0,LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
     chiLuma[MaskPixelOrder[PixelNo]] = 0;
@@ -713,7 +714,8 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
           }
           #endif
         }
-        ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaStride] = static_cast<uint8_t>(Value = std::round(Value));
+        Value = std::round(Value);
+        ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaStride] = static_cast<uint8_t>(Value);
         if (GchiuChromas[ChannelNo])  AddPreBlurValue(GchiuChromas[ChannelNo],x,y,CWidth,CHeight,Value,ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
       }
       if (ErrorText)  break;
@@ -1471,7 +1473,9 @@ const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleSte
     for (x=0 ; x<width ; x++)
     {
       const float v = DistFcn[distRow+x];
-      *DataPtr = static_cast<uint8_t>((v>255.0f)?0xFF:std::round(v));
+      int iv = static_cast<int>(v + 0.5f);
+      iv = std::min(255, std::max(0, iv));
+      *DataPtr = static_cast<uint8_t>(iv);
       DataPtr += SampleStep;
     }
     DataPtr += pitch-width*SampleStep;
@@ -2358,8 +2362,9 @@ void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8
       {
         Value = static_cast<float>(0xFF*((int)(Data[0])) - Alpha0*((int)(LogoData[0])));
         Value *= 1.0f / static_cast<float>(InvAlpha0);
-        if (Value<0.0f)  Value = 0.0f;  else  if (Value>255.0f)  Value = 255.0f;
-        Data[0] = static_cast<uint8_t>(std::roundf(Value));
+        int iValue = static_cast<int>(Value + 0.5f);
+        iValue = std::min(std::max(iValue, 0), 255);
+        Data[0] = static_cast<uint8_t>(iValue);
       }
       AlphaData += AlphaSampleStep;
       LogoData += LogoStride;
@@ -2404,8 +2409,9 @@ void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  co
       {
         Value = static_cast<float>(TotalAlpha*((int)(Data[0])) - Alpha*((int)(LogoData[0])));
         Value *= 1.0f / static_cast<float>(InvAlpha);
-        if (Value<0.0f)  Value = 0.0f;  else  if (Value>255.0f)  Value = 255.0f;
-        Data[0] = static_cast<uint8_t>(std::roundf(Value));
+        int iValue = static_cast<int>(Value + 0.5f);
+        iValue = std::min(std::max(iValue, 0), 255);
+        Data[0] = static_cast<uint8_t>(iValue);
       }
       LogoData += LogoStride;
       Data += Stride;
@@ -2434,10 +2440,11 @@ void  DeblendStatic(uint8_t  Data[],  const  uint16_t  LogoData[],  const  uint8
       const int  InvAlpha0 = AlphaData[0];  /* stored as 255-alpha */
       if (InvAlpha0)
       {
-        Value = static_cast<float>(255*((int)(Data[0])) - ((int)(LogoData[0])));
+        Value = static_cast<float>(255*Data[0] - LogoData[0]);
         Value *= 1.0f / static_cast<float>(InvAlpha0);
-        if (Value<0.0f)  Value = 0.0f;  else  if (Value>255.0f)  Value = 255.0f;
-        Data[0] = static_cast<uint8_t>(std::roundf(Value));
+        int iValue = static_cast<int>(Value + 0.5f);
+        iValue = std::min(std::max(iValue, 0), 255);
+        Data[0] = static_cast<uint8_t>(iValue);
       }
       AlphaData++;
       LogoData++;
@@ -2483,9 +2490,10 @@ int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataC
   }
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
-    const int  PW = logoFmt.pixelWidth[ChannelNo];
-    const int  PH = logoFmt.pixelHeight[ChannelNo];
-    const int  ChStride = logoFmt.sampleStep[ChannelNo];
+    const int    PW            = logoFmt.pixelWidth[ChannelNo];
+    const int    PH            = logoFmt.pixelHeight[ChannelNo];
+    const int    ChSampleStep  = logoFmt.sampleStep[ChannelNo];
+    const float  invAlphaScale = 1.0f / static_cast<float>(PW*PH);
     DestData = LogoDataChannels[ChannelNo];
     if (!DestData)  continue;
     SrcData = logoPlanes[ChannelNo];
@@ -2502,8 +2510,8 @@ int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataC
             Alpha += AlphaData0[AlphaPitch0*(PH*y+y2)+(x2+x*PW)*AlphaSampleStep0];
           }
         }
-        Alpha = static_cast<int>(std::round(1.0*Alpha/PH/PW));
-        Logo = Alpha*SrcData[logoPitch[ChannelNo]*y+x*ChStride];
+        Alpha = static_cast<int>(static_cast<float>(Alpha) * invAlphaScale + 0.5f);
+        Logo = Alpha*SrcData[logoPitch[ChannelNo]*y+x*ChSampleStep];
         if (AlphaDestData)  AlphaDestData[Width/PW*y+x] = static_cast<uint8_t>(0xFF-Alpha);
         DestData[Width/PW*y+x] = static_cast<uint16_t>(Logo);
       }
@@ -2909,7 +2917,8 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
   {
     for(x=0 ; x<Width ; x++)
     {
-      AlphaData[y*AlphaPitch+x*AlphaSampleStep] = static_cast<uint8_t>(std::round(AlphaChannel[Width*y+x]*0xFF));  /* 0=transparent 255=opaque */
+      const int iAlpha = static_cast<int>(AlphaChannel[Width * y + x] * 255.0f + 0.5f);
+      AlphaData[y*AlphaPitch+x*AlphaSampleStep] = static_cast<uint8_t>(iAlpha);  /* 0=transparent 255=opaque */
     }
   }
   /** Now we compute the color channels **/
@@ -2945,13 +2954,13 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
         // explicit zero-init for each subsequent reuse of the same buffer (e.g. U and V in YV12)
         std::fill(ChannelAlphaVector.begin(), ChannelAlphaVector.end(), 0.0f);
         ChannelAlpha = ChannelAlphaVector.data();
-        const float  PxCount = static_cast<float>(PW*PH);
+        const float  InvPxCount = 1.0f / static_cast<float>(PW*PH);
         for (y=0 ; y<Height ; y++)
         {
           const int  ChRowStart = ChWidth * (y/PH);
           for (x=0 ; x<Width ; x++)
           {
-            ChannelAlpha[ChRowStart + x/PW] += AlphaChannel[Width*y+x] / PxCount;
+            ChannelAlpha[ChRowStart + x/PW] += AlphaChannel[Width*y+x] * InvPxCount;
           }
         }
       }
@@ -2965,11 +2974,18 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
         const int  ChIdx = ChWidth*y+x;
         PixelValue = ChannelAlpha[ChIdx];
         PixelValue = (PixelValue>0.0)?((static_cast<double>(Sum1Ptr[ChIdx])/static_cast<double>(FrameCount))-(1.0-PixelValue)*ChannelNMAverage[ChannelNo])/PixelValue:(static_cast<double>(Sum1Ptr[ChIdx])/static_cast<double>(FrameCount));
-        PixelValue += 0x80;
-        if (PixelValue<0x00)  PixelValue = 0x00;
-        if (PixelValue>0xFF)  PixelValue = 0xFF;
-        if (!(PixelValue<0x100))  PixelValue = 0x80;
-        DestPtr[destPitch[ChannelNo]*y+x*srcFmt.sampleStep[ChannelNo]] = static_cast<uint8_t>(std::round(PixelValue));
+        int  iPixelValue;
+        // NaN/Inf check
+        if (!std::isfinite(PixelValue)) {
+          iPixelValue = 0x80;
+        }
+        else {
+          // safe to round and clamp now
+          iPixelValue = static_cast<int>(PixelValue + 0.5);
+          iPixelValue += 0x80; // chroma center
+          iPixelValue = std::min(std::max(iPixelValue, 0x00), 0xFF);
+        }
+        DestPtr[destPitch[ChannelNo]*y+x*srcFmt.sampleStep[ChannelNo]] = static_cast<uint8_t>(iPixelValue);
       }
     }
   }
