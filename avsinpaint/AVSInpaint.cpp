@@ -2342,7 +2342,7 @@ void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8
 /* Performs a simple deblend with given logo and alpha data         */
 {
   int  x;
-  double  Value;
+  float  Value;
 
   AlphaPitch -= AlphaSampleStep*Width;
   LogoPitch -= LogoStride*Width;
@@ -2352,12 +2352,14 @@ void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8
     x = Width;
     while (x--)
     {
-      if (0xFF-AlphaData[0])
+      const int  Alpha0    = AlphaData[0];
+      const int  InvAlpha0 = 0xFF - Alpha0;
+      if (InvAlpha0)
       {
-        Value = 0xFF*((int)(Data[0]))-((int)(AlphaData[0]))*((int)(LogoData[0]));
-        Value /= 0xFF-AlphaData[0];
-        if (Value<0.0)  Value = 0.0;  else  if (Value>255.0)  Value = 255.0;
-        Data[0] = static_cast<uint8_t>(std::round(Value));
+        Value = static_cast<float>(0xFF*((int)(Data[0])) - Alpha0*((int)(LogoData[0])));
+        Value *= 1.0f / static_cast<float>(InvAlpha0);
+        if (Value<0.0f)  Value = 0.0f;  else  if (Value>255.0f)  Value = 255.0f;
+        Data[0] = static_cast<uint8_t>(std::roundf(Value));
       }
       AlphaData += AlphaSampleStep;
       LogoData += LogoStride;
@@ -2377,7 +2379,7 @@ void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  co
    alpha data.                                                      */
 {
   int  x, Alpha, TotalAlpha, xAlpha, yAlpha, AlphaBigPitch;
-  double  Value;
+  float  Value;
 
   AlphaBigPitch = AlphaPitch*PixelHeight-AlphaSampleStep*Width;
   TotalAlpha = PixelWidth*PixelHeight*0xFF;
@@ -2397,12 +2399,13 @@ void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  co
         for (yAlpha=0 ; yAlpha<PixelHeight ; yAlpha++)  Alpha += AlphaData[AlphaPitch*yAlpha];
         AlphaData += AlphaSampleStep;
       }
-      if (TotalAlpha-Alpha)
+      const int  InvAlpha = TotalAlpha - Alpha;
+      if (InvAlpha)
       {
-        Value = TotalAlpha*((int)(Data[0]))-((int)Alpha)*((int)(LogoData[0]));
-        Value /= TotalAlpha-Alpha;
-        if (Value<0.0)  Value = 0.0;  else  if (Value>255.0)  Value = 255.0;
-        Data[0] = static_cast<uint8_t>(std::round(Value));
+        Value = static_cast<float>(TotalAlpha*((int)(Data[0])) - Alpha*((int)(LogoData[0])));
+        Value *= 1.0f / static_cast<float>(InvAlpha);
+        if (Value<0.0f)  Value = 0.0f;  else  if (Value>255.0f)  Value = 255.0f;
+        Data[0] = static_cast<uint8_t>(std::roundf(Value));
       }
       LogoData += LogoStride;
       Data += Stride;
@@ -2419,7 +2422,7 @@ void  DeblendStatic(uint8_t  Data[],  const  uint16_t  LogoData[],  const  uint8
 /* This deblends a logo with preprocessed data (by
    DeblendStaticPrepare)                                            */
 {
-  double  Value;
+  float  Value;
   int  W;
 
   Pitch -= Stride*Width;
@@ -2428,12 +2431,13 @@ void  DeblendStatic(uint8_t  Data[],  const  uint16_t  LogoData[],  const  uint8
     W = Width;
     while (W--)
     {
-      if (AlphaData[0])
+      const int  InvAlpha0 = AlphaData[0];  /* stored as 255-alpha */
+      if (InvAlpha0)
       {
-        Value = (255*((int)(Data[0]))-((int)(LogoData[0])));
-        Value /= AlphaData[0];
-        if (Value<0.0)  Value = 0.0;  else  if (Value>255.0)  Value = 255.0;
-        Data[0] = static_cast<uint8_t>(std::round(Value));
+        Value = static_cast<float>(255*((int)(Data[0])) - ((int)(LogoData[0])));
+        Value *= 1.0f / static_cast<float>(InvAlpha0);
+        if (Value<0.0f)  Value = 0.0f;  else  if (Value>255.0f)  Value = 255.0f;
+        Data[0] = static_cast<uint8_t>(std::roundf(Value));
       }
       AlphaData++;
       LogoData++;
