@@ -1436,97 +1436,97 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
 }
 
 
-
-AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInfo,  int  FrameNo)
+const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleStep,  int  width,  int  height,
+                                   double  scale,  int  scaleSign,  double  pixelWidth,  double  pixelHeight)
 {
-  DistanceFunctionDataStruct * DistFcnData;
-  AVS_VideoFrame * Frame;
-  int  Width, Height, x, y, FramePitch[MaxChannelCount], Pitch, Stride, ScaleSign;
-  float * DistFcn;
-  double  Scale;
-  uint8_t * FrameData[MaxChannelCount], * DataPtr;
-  const char * ErrorText;
-
-  DistFcnData = static_cast<DistanceFunctionDataStruct*>(FilterInfo->user_data);
-  Width = DistFcnData->Width;
-  Height = DistFcnData->Height;
-  Stride = DistFcnData->layout.sampleStep[DistFcnData->LumaChannelNo];
-  Scale = DistFcnData->Scale;
-  ScaleSign = DistFcnData->ScaleSign;
-  ErrorText = nullptr;
-  Frame = avs_get_frame(FilterInfo->child,FrameNo);
-  if (Frame)  avs_make_writable(FilterInfo->env,&Frame);
-  FrameData[DistFcnData->LumaChannelNo] = nullptr;
-  if (Frame)  AvsGetFramePlanes(Frame,DistFcnData->layout,FrameData,FramePitch);
-  Pitch = FramePitch[DistFcnData->LumaChannelNo];
-  if (FrameData[DistFcnData->LumaChannelNo] && (Scale==0.0))
-  /* If scale is zero, we simply make the image binary and run away */
+  int  x, y;
+  if (scale == 0.0)
   {
-    DataPtr = FrameData[DistFcnData->LumaChannelNo];
-    for (y=0 ; y<Height ; y++)
+    uint8_t * DataPtr = data;
+    for (y=0 ; y<height ; y++)
     {
-      for (x=0 ; x<Width ; x++)
+      for (x=0 ; x<width ; x++)
       {
         *DataPtr = ((*DataPtr)>(MaskThreshold))?0xFF:0x00;
-        DataPtr += Stride;
+        DataPtr += SampleStep;
       }
-      DataPtr += Pitch-Width*Stride;
+      DataPtr += pitch-width*SampleStep;
     }
-    return  Frame;
+    return  nullptr;
   }
   std::vector<float> DistFcnVec;
-  try  { DistFcnVec.resize(Width*Height); }
-  catch (std::bad_alloc&)  { ErrorText = "DistanceFunction: Could not allocate memory"; }
-  DistFcn = DistFcnVec.data();
-  if (ErrorText || !FrameData[DistFcnData->LumaChannelNo])
+  try  { DistFcnVec.resize(width*height); }
+  catch (std::bad_alloc&)  { return  "DistanceFunction: Could not allocate memory"; }
+  float * DistFcn = DistFcnVec.data();
+  uint8_t * DataPtr = data;
+  for (y=0 ; y<height ; y++)
   {
-    if (!FrameData[DistFcnData->LumaChannelNo])  ErrorText = "DistanceFunction: Could not get pixel data pointers";
-    if (Frame)  avs_release_video_frame(Frame);  else  ErrorText = "DistanceFunction: Could not get video Frame";
-    FilterInfo->error = ErrorText;
-    return  nullptr;
-  }
-  DataPtr = FrameData[DistFcnData->LumaChannelNo];
-  for (y=0 ; y<Height ; y++)
-  {
-    const int distRow = y*Width;
-    for (x=0 ; x<Width ; x++)
+    const int distRow = y*width;
+    for (x=0 ; x<width ; x++)
     {
-      DistFcn[distRow+x] = (ScaleSign*(MaskThresholdSign)*(*DataPtr)>ScaleSign*(MaskThresholdSign)*(MaskThreshold))?0.0f:1.0f;
-      DataPtr += Stride;
+      DistFcn[distRow+x] = (scaleSign*(MaskThresholdSign)*(*DataPtr)>scaleSign*(MaskThresholdSign)*(MaskThreshold))?0.0f:1.0f;
+      DataPtr += SampleStep;
     }
-    DataPtr += Pitch-Width*Stride;
+    DataPtr += pitch-width*SampleStep;
   }
-  if (!FastMarching(DistFcn,nullptr,Width,Height,DistFcnData->PixelWidth,DistFcnData->PixelHeight))
+  if (!FastMarching(DistFcn,nullptr,width,height,pixelWidth,pixelHeight))
+    return  "DistanceFunction: Mask processing failed: Out of memory";
+  for (float& v : DistFcnVec)  v *= static_cast<float>(scale);
+  DataPtr = data;
+  for (y=0 ; y<height ; y++)
   {
-    avs_release_video_frame(Frame);
-    FilterInfo->error = "DistanceFunction: Mask processing failed: Out of memory";
-    return  nullptr;
-  }
-  for (float& v : DistFcnVec)  v *= static_cast<float>(Scale);
-  DataPtr = FrameData[DistFcnData->LumaChannelNo];
-  for (y=0 ; y<Height ; y++)
-  {
-    const int distRow = y*Width;
-    for (x=0 ; x<Width ; x++)
+    const int distRow = y*width;
+    for (x=0 ; x<width ; x++)
     {
       const float v = DistFcn[distRow+x];
       *DataPtr = static_cast<uint8_t>((v>255.0f)?0xFF:std::round(v));
-      DataPtr += Stride;
+      DataPtr += SampleStep;
     }
-    DataPtr += Pitch-Width*Stride;
+    DataPtr += pitch-width*SampleStep;
   }
-  if (ScaleSign*MaskThresholdSign>0)
+  if (scaleSign*MaskThresholdSign>0)
   {
-    DataPtr = FrameData[DistFcnData->LumaChannelNo];
-    for (y=0 ; y<Height ; y++)
+    DataPtr = data;
+    for (y=0 ; y<height ; y++)
     {
-      for (x=0 ; x<Width ; x++)
+      for (x=0 ; x<width ; x++)
       {
         *DataPtr ^= 0xFF;
-        DataPtr += Stride;
+        DataPtr += SampleStep;
       }
-      DataPtr += Pitch-Width*Stride;
+      DataPtr += pitch-width*SampleStep;
     }
+  }
+  return  nullptr;
+}
+
+
+
+AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInfo,  int  FrameNo)
+{
+  DistanceFunctionDataStruct * DistFcnData = static_cast<DistanceFunctionDataStruct*>(FilterInfo->user_data);
+  AVS_VideoFrame * Frame = avs_get_frame(FilterInfo->child,FrameNo);
+  if (Frame)  avs_make_writable(FilterInfo->env,&Frame);
+  uint8_t * FrameData[MaxChannelCount] = {};
+  int  FramePitch[MaxChannelCount] = {};
+  if (Frame)  AvsGetFramePlanes(Frame,DistFcnData->layout,FrameData,FramePitch);
+  uint8_t * DataPtr = FrameData[DistFcnData->LumaChannelNo];
+  if (!DataPtr)
+  {
+    if (Frame)  avs_release_video_frame(Frame);
+    FilterInfo->error = Frame ? "DistanceFunction: Could not get pixel data pointers" : "DistanceFunction: Could not get video frame";
+    return  nullptr;
+  }
+  const char * ErrorText = DistanceFunctionCore(DataPtr, FramePitch[DistFcnData->LumaChannelNo],
+    DistFcnData->layout.sampleStep[DistFcnData->LumaChannelNo],
+    DistFcnData->Width, DistFcnData->Height,
+    DistFcnData->Scale, DistFcnData->ScaleSign,
+    DistFcnData->PixelWidth, DistFcnData->PixelHeight);
+  if (ErrorText)
+  {
+    avs_release_video_frame(Frame);
+    FilterInfo->error = ErrorText;
+    return  nullptr;
   }
   return  Frame;
 }

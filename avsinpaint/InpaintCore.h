@@ -163,6 +163,9 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
 
 const char *  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDataStruct *  MaskData,  uint8_t *  FrameData[],  const int  FramePitch[]);
 
+const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleStep,  int  width,  int  height,
+                                   double  scale,  int  scaleSign,  double  pixelWidth,  double  pixelHeight);
+
 int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsigned int  FrameCount,
                  std::function<bool(unsigned int, const uint8_t*[], int[])>  fetchSrcFrame,
                  std::function<void(unsigned int)>                           releaseSrcFrame,
