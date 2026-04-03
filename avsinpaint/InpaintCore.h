@@ -158,6 +158,24 @@ FrameLayout  FrameLayoutFromPixelType(int  PixelType);
 /* Kernel builder (used during filter creation by both AVS and VS4 wrappers) */
 double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  double  Center);
 
+/* Deblend tools — no API types; all frame data via plain pointers */
+
+/* We need double bytes for deblending — ints are too large (needs too much memory) */
+struct DoubleByte
+{
+  uint8_t  L, H;
+};
+
+void  DeblendStatic(uint8_t  Data[],  const  DoubleByte  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height);
+
+/* alphaPlane==nullptr means alpha is embedded in the last channel of logoPlanes.
+   When alphaPlane is non-null, the caller must already have applied any packed-format
+   byte offset (+3 for RGB32 A channel) and any row-flip (negative pitch for upside-down clips). */
+int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
+                           const FrameLayout &  logoFmt,  int  Width,  int  Height,
+                           const uint8_t *  logoPlanes[],  int  logoPitch[],
+                           const uint8_t *  alphaPlane,  int  alphaPitch,  int  alphaSampleStep);
+
 /* Core algorithm — no API types; all frame data via plain pointers */
 InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData);
 
