@@ -700,7 +700,7 @@ struct VSDeblendData
   FrameLayout  logoLayout;  /* logo format */
   int  logoFrameCount, alphaFrameCount;
   /* Static logo storage (populated at creation when logo has 1 frame) */
-  std::array<std::vector<DoubleByte>, MaxChannelCount>  StaticLogoDataChannels;
+  std::array<std::vector<uint16_t>, MaxChannelCount>  StaticLogoDataChannels;
   std::array<std::vector<uint8_t>, MaxChannelCount>     StaticAlphaDataChannels;
 };
 
@@ -922,8 +922,8 @@ static void  VS_CC  vsDeblendCreate(const VSMap *  in,  VSMap *  out,  void *  /
       int  logoPitch[MaxChannelCount] = {};
       VsGetFramePlanesRO(logoFrame, d->logoLayout, logoPlanes, logoPitch, vsapi);
 
-      DoubleByte * logoPtrs[MaxChannelCount] = {};
-      uint8_t *    alphaPtrs[MaxChannelCount] = {};
+      uint16_t * logoPtrs[MaxChannelCount] = {};
+      uint8_t *  alphaPtrs[MaxChannelCount] = {};
       for (int ch = 0 ; ch < MaxChannelCount ; ch++)
       {
         logoPtrs[ch]  = d->StaticLogoDataChannels[ch].empty() ? nullptr : d->StaticLogoDataChannels[ch].data();

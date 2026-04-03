@@ -160,20 +160,17 @@ double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  d
 
 /* Deblend tools — no API types; all frame data via plain pointers */
 
-/* We need double bytes for deblending — ints are too large (needs too much memory) */
-struct DoubleByte
-{
-  uint8_t  L, H;
-};
-
 void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height);
 void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
-void  DeblendStatic(uint8_t  Data[],  const  DoubleByte  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height);
+/* LogoData[i] = alpha * logo_pixel, premultiplied, uint16_t (range [0..255*255=65025], fits exactly).
+   AlphaData[i] = 255 - alpha (the effective denominator in the deblend formula).
+   Hot-loop formula: source = (255*blended - Logo) / (255-alpha), computed in double. */
+void  DeblendStatic(uint8_t  Data[],  const  uint16_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height);
 
 /* alphaPlane==nullptr means alpha is embedded in the last channel of logoPlanes.
    When alphaPlane is non-null, the caller must already have applied any packed-format
    byte offset (+3 for RGB32 A channel) and any row-flip (negative pitch for upside-down clips). */
-int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
+int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
                            const FrameLayout &  logoFmt,  int  Width,  int  Height,
                            const uint8_t *  logoPlanes[],  int  logoPitch[],
                            const uint8_t *  alphaPlane,  int  alphaPitch,  int  alphaSampleStep);

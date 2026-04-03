@@ -89,7 +89,7 @@ struct DeblendDataStruct
   int  PixelType, Width, Height;
   FrameLayout  layout;
   /* Static logo */
-  std::array<std::vector<DoubleByte>, MaxChannelCount>  StaticLogoDataChannels;
+  std::array<std::vector<uint16_t>, MaxChannelCount>  StaticLogoDataChannels;
   std::array<std::vector<uint8_t>, MaxChannelCount>         StaticAlphaDataChannels;
   /* Dynamic logo */
   AVS_Clip * LogoClip, * AlphaClip;
@@ -164,7 +164,7 @@ double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  d
 /* Deblend tools */
 void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height);
 void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
-int  AvsDeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo);
+int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo);
 /* Analyze tools */
 int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsigned int  FrameCount,
                  std::function<bool(unsigned int, const uint8_t*[], int[])>  fetchSrcFrame,
@@ -912,7 +912,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     if (!ErrorText)
     {
       /* Core function for static logos is called */
-      DoubleByte * logoPtrs[MaxChannelCount] = {};
+      uint16_t * logoPtrs[MaxChannelCount] = {};
       uint8_t * alphaPtrs[MaxChannelCount] = {};
       for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)
       {
@@ -2415,7 +2415,7 @@ void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  co
 
 
 
-void  DeblendStatic(uint8_t  Data[],  const  DoubleByte  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height)
+void  DeblendStatic(uint8_t  Data[],  const  uint16_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height)
 /* This deblends a logo with preprocessed data (by
    DeblendStaticPrepare)                                            */
 {
@@ -2430,7 +2430,7 @@ void  DeblendStatic(uint8_t  Data[],  const  DoubleByte  LogoData[],  const  uin
     {
       if (AlphaData[0])
       {
-        Value = (255*((int)(Data[0]))-256*((int)(LogoData[0].H))+((int)(LogoData[0].L)));
+        Value = (255*((int)(Data[0]))-((int)(LogoData[0])));
         Value /= AlphaData[0];
         if (Value<0.0)  Value = 0.0;  else  if (Value>255.0)  Value = 255.0;
         Data[0] = static_cast<uint8_t>(std::round(Value));
@@ -2445,7 +2445,7 @@ void  DeblendStatic(uint8_t  Data[],  const  DoubleByte  LogoData[],  const  uin
 
 
 
-int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
+int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
                            const FrameLayout &  logoFmt,  int  Width,  int  Height,
                            const uint8_t *  logoPlanes[],  int  logoPitch[],
                            const uint8_t *  alphaPlane,  int  alphaPitch,  int  alphaSampleStep)
@@ -2458,7 +2458,7 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDat
 {
   const  uint8_t * SrcData, * AlphaData0;
   uint8_t * AlphaDestData;
-  DoubleByte * DestData;
+  uint16_t * DestData;
   int  AlphaPitch0, AlphaSampleStep0;
   int  ChannelNo, ChannelCount, x, y, x2, y2, Alpha, Logo;
 
@@ -2501,8 +2501,7 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDat
         Alpha = static_cast<int>(std::round(1.0*Alpha/PH/PW));
         Logo = Alpha*SrcData[logoPitch[ChannelNo]*y+x*ChStride];
         if (AlphaDestData)  AlphaDestData[Width/PW*y+x] = static_cast<uint8_t>(0xFF-Alpha);
-        DestData[Width/PW*y+x].L = static_cast<uint8_t>(Logo%(0xFF));
-        DestData[Width/PW*y+x].H = static_cast<uint8_t>(Logo/(0xFF));
+        DestData[Width/PW*y+x] = static_cast<uint16_t>(Logo);
       }
     }
   }
@@ -2511,7 +2510,7 @@ int  DeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDat
 
 
 
-int  AvsDeblendStaticPrepare(DoubleByte *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
+int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
                               AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,
                               const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo)
 {
