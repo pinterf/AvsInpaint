@@ -61,6 +61,7 @@ constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= real
 #include  <algorithm>
 #include  <array>
 #include  <functional>
+#include  <type_traits>
 #include  <vector>
 
 #include  "avisynth/avisynth_c.h"
@@ -511,7 +512,7 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
   std::vector<float> GchiLumaVec, GchiChromaVec, GchiuLumaVec;
   float * GchiLuma = nullptr, * GchiChroma = nullptr, * GchiuLuma = nullptr;
   std::vector<float> GchiuChromasVec[MaxChannelCount-1];
-  float * GchiuChromas[MaxChannelCount], * GchiuChroma;
+  float * GchiuChromas[MaxChannelCount];
 
   /* Store all important values locally */
   PixelWidth2 = InpaintData->PixelWidth*InpaintData->PixelWidth;
@@ -1894,7 +1895,8 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
   InpaintMaskDataStruct * MaskData;
   double  PixelWidth, PixelHeight;
   float * DistFcn, * u, * Gchi;
-  int  x, y, xmin, xmax, ymin, ymax, Width, Height, k;
+  int  x, y, xmin, xmax, ymin, ymax, Width, Height, k, RowStep;
+  int  ChromaWidth = 0, ChromaHeight = 0;
   int  SampleStep, Pitch;
   signed int  MaskSize;
   const  uint8_t * DataPtr;
@@ -1928,6 +1930,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
     Pitch *= -1;
     DataPtr -= (InpaintData->Height-1)*Pitch;
   }
+  RowStep = Pitch - Width*SampleStep;
   for (y=0 ; y<Height ; y++)
   {
     for (x=0 ; x<Width ; x++)
@@ -1936,7 +1939,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
       *(u++) = MaskIsSet?0.0f:1.0f;
       DataPtr += SampleStep;
     }
-    DataPtr += Pitch-Width*SampleStep;
+    DataPtr += RowStep;
   }
   if (!MaskSize || (MaskSize==Width*Height))
   {
@@ -2012,11 +2015,17 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
     MaskData->OffsetY = ymin;
     MaskData->Width = Width = xmax-xmin;
     MaskData->Height = Height = ymax-ymin;
+    if (InpaintData->ChromaChannelCount)
+    {
+      ChromaWidth  = Width  / InpaintData->ChromaPixelWidth;
+      ChromaHeight = Height / InpaintData->ChromaPixelHeight;
+    }
+    RowStep = Pitch - Width*SampleStep;
     try
     {
       MaskData->chiLuma.resize(Width*Height);
       if (InpaintData->ChromaChannelCount)
-        MaskData->chiChroma.resize((Width/InpaintData->ChromaPixelWidth)*(Height/InpaintData->ChromaPixelHeight), 0);
+        MaskData->chiChroma.resize(ChromaWidth*ChromaHeight, 0);
     }
     catch (std::bad_alloc&)  { Result = InpaintMaskResult::MemoryError; }
     if (MaskSize==Width*Height)  Result = InpaintMaskResult::GeneralError;
@@ -2050,7 +2059,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
         *(u++) = MaskIsSet?1.0f:0.0f;
         DataPtr += SampleStep;
       }
-      DataPtr += Pitch-Width*SampleStep;
+      DataPtr += RowStep;
     }
     if (MaskSize)  Result = InpaintMaskResult::GeneralError;
   }
@@ -2058,12 +2067,57 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
   {
     if (!MaskData->chiChroma.empty())
     {
+      /* ly is outer to x: chi advances in scanline order (all x for a luma row, then next row).
+         For each chroma row block, every luma sub-row (ly) must be fully consumed across all
+         chroma columns (x) before advancing ly — swapping ly and x would break scanline order.
+         The lambda receives CPW/CPH as std::integral_constant so they are compile-time constants
+         inside the body
+         Combinations: (1,1)=RGB/4:4:4, (2,1)=4:2:2/YUY2, (2,2)=4:2:0. */
       chi = MaskData->chiLuma.data();
-      for (y=0 ; y<Height ; y++)
+      auto accumulateChroma = [&](auto cpwConst, auto cphConst)
       {
-        for (x=0 ; x<Width ; x++)
+        constexpr int CPW = decltype(cpwConst)::value;
+        constexpr int CPH = decltype(cphConst)::value;
+        for (y=0 ; y<ChromaHeight ; y++)
         {
-          MaskData->chiChroma[(y/InpaintData->ChromaPixelHeight)*(Width/InpaintData->ChromaPixelWidth)+x/InpaintData->ChromaPixelWidth] += *(chi++);
+          uint8_t * const chromaRowPtr = &MaskData->chiChroma[y*ChromaWidth];
+          for (int ly=0 ; ly<CPH ; ly++)
+            for (x=0 ; x<ChromaWidth ; x++)
+            {
+              if constexpr (CPW == 1)
+                chromaRowPtr[x] += *(chi++);
+              else if constexpr (CPW == 2)
+              {
+                chromaRowPtr[x] += chi[0] + chi[1];
+                chi += 2;
+              }
+              else
+              {
+                int sum = 0;
+                for (int lx=0 ; lx<CPW ; lx++)  sum += *(chi++);
+                chromaRowPtr[x] += static_cast<uint8_t>(sum);
+              }
+            }
+        }
+      };
+      if      (InpaintData->ChromaPixelWidth==1 && InpaintData->ChromaPixelHeight==1)
+        accumulateChroma(std::integral_constant<int,1>{}, std::integral_constant<int,1>{});
+      else if (InpaintData->ChromaPixelWidth==2 && InpaintData->ChromaPixelHeight==1)
+        accumulateChroma(std::integral_constant<int,2>{}, std::integral_constant<int,1>{});
+      else if (InpaintData->ChromaPixelWidth==2 && InpaintData->ChromaPixelHeight==2)
+        accumulateChroma(std::integral_constant<int,2>{}, std::integral_constant<int,2>{});
+      else  /* unsupported subsampling (e.g. 4:1:1): general runtime fallback */
+      {
+        for (y=0 ; y<ChromaHeight ; y++)
+        {
+          uint8_t * const chromaRowPtr = &MaskData->chiChroma[y*ChromaWidth];
+          for (int ly=0 ; ly<InpaintData->ChromaPixelHeight ; ly++)
+            for (x=0 ; x<ChromaWidth ; x++)
+            {
+              int sum = 0;
+              for (int lx=0 ; lx<InpaintData->ChromaPixelWidth ; lx++)  sum += *(chi++);
+              chromaRowPtr[x] += static_cast<uint8_t>(sum);
+            }
         }
       }
     }
@@ -2083,7 +2137,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
     try
     {
       if (InpaintData->LumaWeight!=0.0)    MaskData->GchiLuma.resize(Width*Height);
-      if (InpaintData->ChromaWeight!=0.0)  MaskData->GchiChroma.resize((Width/InpaintData->ChromaPixelWidth)*(Height/InpaintData->ChromaPixelHeight));
+      if (InpaintData->ChromaWeight!=0.0)  MaskData->GchiChroma.resize(ChromaWidth*ChromaHeight);
     }
     catch (std::bad_alloc&)  { Result = InpaintMaskResult::MemoryError; }
   }
@@ -2091,19 +2145,27 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
   {
     if (!MaskData->GchiLuma.empty())
     {
-      Gchi = MaskData->GchiLuma.data();
-      for (k=0 ; k<Width*Height ; k++)  *(Gchi++) = 0.0f;
       chi = MaskData->chiLuma.data();
       Gchi = MaskData->GchiLuma.data();
-      for (k=0 ; k<Width*Height ; k++)  if (!chi[k])  AddPreBlurValue(Gchi,k%Width,k/Width,Width,Height,1,InpaintData->LumaPreBlurXKernel,InpaintData->LumaPreBlurXKernelSize,InpaintData->LumaPreBlurYKernel,InpaintData->LumaPreBlurYKernelSize);
+      for (y=0 ; y<Height ; y++)
+      {
+        const int rowBase = y*Width;
+        for (x=0 ; x<Width ; x++)
+          if (!chi[rowBase+x])
+            AddPreBlurValue(Gchi, x, y, Width, Height, 1, InpaintData->LumaPreBlurXKernel, InpaintData->LumaPreBlurXKernelSize, InpaintData->LumaPreBlurYKernel, InpaintData->LumaPreBlurYKernelSize);
+      }
     }
     if (!MaskData->GchiChroma.empty())
     {
-      Gchi = MaskData->GchiChroma.data();
-      for (k=0 ; k<(Width/InpaintData->ChromaPixelWidth)*(Height/InpaintData->ChromaPixelHeight) ; k++)  *(Gchi++) = 0.0f;
       chi = MaskData->chiChroma.data();
       Gchi = MaskData->GchiChroma.data();
-      for (k=0 ; k<(Width/InpaintData->ChromaPixelWidth)*(Height/InpaintData->ChromaPixelHeight) ; k++)  if (!chi[k])  AddPreBlurValue(Gchi,k%(Width/InpaintData->ChromaPixelWidth),k/(Width/InpaintData->ChromaPixelWidth),Width/InpaintData->ChromaPixelWidth,Height/InpaintData->ChromaPixelHeight,1.0,InpaintData->ChromaPreBlurXKernel,InpaintData->ChromaPreBlurXKernelSize,InpaintData->ChromaPreBlurYKernel,InpaintData->ChromaPreBlurYKernelSize);
+      for (y = 0; y < ChromaHeight; y++)
+      {
+        const int rowBase = y * ChromaWidth;
+        for (x = 0; x < ChromaWidth; x++)
+          if (!chi[rowBase + x])
+            AddPreBlurValue(Gchi, x, y, ChromaWidth, ChromaHeight, 1, InpaintData->ChromaPreBlurXKernel, InpaintData->ChromaPreBlurXKernelSize, InpaintData->ChromaPreBlurYKernel, InpaintData->ChromaPreBlurYKernelSize);
+      }
     }
   }
   if (Result!=InpaintMaskResult::OK)  { delete MaskData;  MaskData = nullptr; }
