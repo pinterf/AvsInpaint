@@ -1007,14 +1007,13 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
 {
   DeblendDataStruct * DeblendData;
   AVS_VideoFrame * Frame;
-  int  ChannelCount, Width, Height, PixelType, FramePitch[MaxChannelCount];
+  int  ChannelCount, Width, Height, FramePitch[MaxChannelCount];
   const int  * FrameSampleStep, * FramePixelWidth, * FramePixelHeight;
   uint8_t * FrameData[MaxChannelCount], * AlphaData;
   int  ChannelNo;
 
   /* Get some data from the data structure, load frames and get data pointers */
   DeblendData = static_cast<DeblendDataStruct*>(FilterInfo->user_data);
-  PixelType = DeblendData->PixelType;
   Width = DeblendData->Width;
   Height = DeblendData->Height;
   FrameSampleStep    = DeblendData->layout.sampleStep;
@@ -1030,9 +1029,8 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
     return  nullptr;
   }
   AlphaData = nullptr;
-  for (ChannelNo=0 ; ChannelNo<MaxChannelCount ; ChannelNo++)
+  for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
-    if (DeblendData->StaticLogoDataChannels[ChannelNo].empty())  break;
     if (!DeblendData->StaticAlphaDataChannels[ChannelNo].empty())  AlphaData = DeblendData->StaticAlphaDataChannels[ChannelNo].data();
     DeblendStatic(FrameData[ChannelNo],DeblendData->StaticLogoDataChannels[ChannelNo].data(),AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],Width/FramePixelWidth[ChannelNo],Height/FramePixelHeight[ChannelNo]);
   }
@@ -1045,7 +1043,7 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
 {
   DeblendDataStruct * DeblendData;
   AVS_VideoFrame * Frame, * LogoFrame, * AlphaFrame;
-  int  ChannelCount, PixelType, Width, Height, FramePitch[MaxChannelCount];
+  int  ChannelCount, Width, Height, FramePitch[MaxChannelCount];
   const int  * FrameSampleStep, * FramePixelWidth, * FramePixelHeight;
   int  LogoChannelCount, LogoPixelType, LogoFramePitch[MaxChannelCount];
   const int  * LogoFrameSampleStep;
@@ -1057,7 +1055,6 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
 
   /* Get some data from the data structure, load frames and get data pointers */
   DeblendData = static_cast<DeblendDataStruct*>(FilterInfo->user_data);
-  PixelType = DeblendData->PixelType;
   Width = DeblendData->Width;
   Height = DeblendData->Height;
   FrameSampleStep    = DeblendData->layout.sampleStep;
