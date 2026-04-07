@@ -149,7 +149,7 @@ bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Wid
 InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData);
 static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  const InpaintDataStruct *  InpaintData);
 void  AddPreBlurValue(float  G[],  int  x,  int  y,  int  Width,  int  Height,  int  Value,  double  BlurXKernel[],  int  BlurXKernelSize,  double  BlurYKernel[],  int  BlurYKernelYize);
-int  InpaintPixel(double  RadiusX,  double  RadiusY,  uint8_t  u[],  uint8_t  chi[],  int  SampleStep,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY);
+template<int SS> static int  InpaintPixelImpl(double  RadiusX,  double  RadiusY,  uint8_t  u[],  uint8_t  chi[],  int  SampleStep,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY);
 double  GetCoherenceData(double *  CoherenceDirectionX,  double *  CoherenceDirectionY,  double  TensorXX,  double  TensorXY,  double  TensorYY,  double  Sharpness);
 void  GetStructureTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,
                          float *  GchiLuma,  float *  GchiuLuma,  uint8_t *  chiLuma,  double  LumaWeight,
@@ -477,8 +477,9 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
 }
 
 
-
-const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDataStruct *  MaskData,  uint8_t *  FrameData[],  const int  FramePitch[])
+// With Luma and Chroma SampleStep template
+template<int LSS, int CSS>
+static const char*  InpaintCoreImpl(const InpaintDataStruct *  InpaintData,  InpaintMaskDataStruct *  MaskData,  uint8_t *  FrameData[],  const int  FramePitch[])
 {
   uint8_t * LumaData, * ChromaDatas[MaxChannelCount-1], * ChromaData;
   int  LumaPitch;
@@ -492,7 +493,7 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
   double  LumaRadiusX, LumaRadiusY, ChromaRadiusX, ChromaRadiusY, Sharpness;
   bool  ChromaTensor;
   /* Color space dependent values */
-  int  ChromaPixelWidth, ChromaPixelHeight, LumaSampleStep, ChromaSampleStep, ChromaChannelCount;
+  int  ChromaPixelWidth, ChromaPixelHeight, ChromaChannelCount;
   /* Blurring stuff */
   double * LumaPreBlurXKernel, * LumaPreBlurYKernel, * ChromaPreBlurXKernel, * ChromaPreBlurYKernel;
   double * Luma4LumaPostBlurXKernel, * Luma4LumaPostBlurYKernel;
@@ -527,8 +528,8 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
   ChromaTensor = InpaintData->ChromaTensor;
   ChromaPixelWidth = InpaintData->ChromaPixelWidth;
   ChromaPixelHeight = InpaintData->ChromaPixelHeight;
-  LumaSampleStep = InpaintData->srcLayout.sampleStep[0];
-  ChromaSampleStep = InpaintData->srcLayout.sampleStep[1];
+  const int LumaSampleStep   = (LSS > 0) ? LSS : InpaintData->srcLayout.sampleStep[0];
+  const int ChromaSampleStep = (CSS > 0) ? CSS : InpaintData->srcLayout.sampleStep[1];
   ChromaChannelCount = InpaintData->ChromaChannelCount;
   const bool isYUV             = InpaintData->isYUV;
   const bool isChromaSubsampled = InpaintData->isChromaSubsampled;
@@ -682,7 +683,7 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
         nullptr, 0, 1 /*n/a*/,
         nullptr, 0, 1 /*n/a*/);
     CoherenceStrength = GetCoherenceData(&CoherenceDirectionX,&CoherenceDirectionY,TensorXX/PixelWidth2,TensorXY,TensorYY/PixelHeight2,Sharpness);
-    int iValue = InpaintPixel(LumaRadiusX,LumaRadiusY,LumaData,chiLuma,LumaSampleStep,LumaPitch,x,y,Width,Height,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
+    int iValue = InpaintPixelImpl<LSS>(LumaRadiusX,LumaRadiusY,LumaData,chiLuma,LumaSampleStep,LumaPitch,x,y,Width,Height,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
     /* What to do if inpainting failed ?? */
     if (iValue<0)
     {
@@ -718,7 +719,7 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
       for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)
       {
         ChromaData = ChromaDatas[ChannelNo];
-        int iValue = InpaintPixel(ChromaRadiusX,ChromaRadiusY,ChromaData,chiChroma,ChromaSampleStep,ChromaPitch[ChannelNo],x,y,CWidth,CHeight,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
+        int iValue = InpaintPixelImpl<CSS>(ChromaRadiusX,ChromaRadiusY,ChromaData,chiChroma,ChromaSampleStep,ChromaPitch[ChannelNo],x,y,CWidth,CHeight,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
         if (iValue<0)
         {
           /* When inpainting fails on a subsampled channel, then the mask (almost certainly) contains to small holes (not covered by chroma resolution). If otherwise, we have a serious problem with our code (as above in the luma case). */
@@ -1458,9 +1459,11 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
 }
 
 
-const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleStep,  int  width,  int  height,
-                                   double  scale,  int  scaleSign,  double  pixelWidth,  double  pixelHeight)
+template<int SS>
+static const char *  DistanceFunctionCoreImpl(uint8_t *  data,  int  pitch,  int  SampleStep,  int  width,  int  height,
+                                              double  scale,  int  scaleSign,  double  pixelWidth,  double  pixelHeight)
 {
+  const int stride = (SS > 0) ? SS : SampleStep;
   int  x, y;
   if (scale == 0.0)
   {
@@ -1470,9 +1473,9 @@ const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleSte
       for (x=0 ; x<width ; x++)
       {
         *DataPtr = ((*DataPtr)>(MaskThreshold))?0xFF:0x00;
-        DataPtr += SampleStep;
+        DataPtr += stride;
       }
-      DataPtr += pitch-width*SampleStep;
+      DataPtr += pitch-width*stride;
     }
     return  nullptr;
   }
@@ -1487,9 +1490,9 @@ const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleSte
     for (x=0 ; x<width ; x++)
     {
       DistFcn[distRow+x] = (scaleSign*(MaskThresholdSign)*(*DataPtr)>scaleSign*(MaskThresholdSign)*(MaskThreshold))?0.0f:1.0f;
-      DataPtr += SampleStep;
+      DataPtr += stride;
     }
-    DataPtr += pitch-width*SampleStep;
+    DataPtr += pitch-width*stride;
   }
   if (!FastMarching(DistFcn,nullptr,width,height,pixelWidth,pixelHeight))
     return  "DistanceFunction: Mask processing failed: Out of memory";
@@ -1504,9 +1507,9 @@ const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleSte
       int iv = static_cast<int>(v + 0.5f);
       iv = std::min(255, std::max(0, iv));
       *DataPtr = static_cast<uint8_t>(iv);
-      DataPtr += SampleStep;
+      DataPtr += stride;
     }
-    DataPtr += pitch-width*SampleStep;
+    DataPtr += pitch-width*stride;
   }
   if (scaleSign*MaskThresholdSign>0)
   {
@@ -1516,12 +1519,25 @@ const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleSte
       for (x=0 ; x<width ; x++)
       {
         *DataPtr ^= 0xFF;
-        DataPtr += SampleStep;
+        DataPtr += stride;
       }
-      DataPtr += pitch-width*SampleStep;
+      DataPtr += pitch-width*stride;
     }
   }
   return  nullptr;
+}
+
+const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleStep,  int  width,  int  height,
+                                   double  scale,  int  scaleSign,  double  pixelWidth,  double  pixelHeight)
+{
+  switch (SampleStep)
+  {
+    case 1:  return DistanceFunctionCoreImpl<1>(data, pitch, SampleStep, width, height, scale, scaleSign, pixelWidth, pixelHeight);  /* planar: all VS4, YUV planar, Y8, RGBP */
+    case 2:  return DistanceFunctionCoreImpl<2>(data, pitch, SampleStep, width, height, scale, scaleSign, pixelWidth, pixelHeight);  /* YUY2 luma */
+    case 3:  return DistanceFunctionCoreImpl<3>(data, pitch, SampleStep, width, height, scale, scaleSign, pixelWidth, pixelHeight);  /* RGB24 */
+    case 4:  return DistanceFunctionCoreImpl<4>(data, pitch, SampleStep, width, height, scale, scaleSign, pixelWidth, pixelHeight);  /* YUY2 chroma / RGB32 */
+    default: return DistanceFunctionCoreImpl<0>(data, pitch, SampleStep, width, height, scale, scaleSign, pixelWidth, pixelHeight);  /* unknown: runtime fallback */
+  }
 }
 
 
@@ -1889,7 +1905,8 @@ bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Wid
 /****************************************************************
                          Inpaint tools
  ****************************************************************/
-InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData)
+template<int SS>
+static InpaintMaskResult  InpaintPrepareMaskImpl(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData)
 /* If mask is full or empty, MaskData is cleared */
 {
   InpaintMaskDataStruct * MaskData;
@@ -1897,7 +1914,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
   float * DistFcn, * u, * Gchi;
   int  x, y, xmin, xmax, ymin, ymax, Width, Height, k, RowStep;
   int  ChromaWidth = 0, ChromaHeight = 0;
-  int  SampleStep, Pitch;
+  int  Pitch;
   signed int  MaskSize;
   const  uint8_t * DataPtr;
   uint8_t * chi;
@@ -1921,7 +1938,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
   catch (std::bad_alloc&)  { delete MaskData;  return  InpaintMaskResult::MemoryError; }
   DistFcn = DistFcnVec.data();
   Pitch = pitch[InpaintData->MaskChannelNo];
-  SampleStep = maskLayout.sampleStep[InpaintData->MaskChannelNo];
+  const int SampleStep = (SS > 0) ? SS : maskLayout.sampleStep[InpaintData->MaskChannelNo];
   MaskSize = 0;
   DataPtr = planes[InpaintData->MaskChannelNo];
   u = DistFcn;
@@ -2173,6 +2190,18 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
   return  Result;
 }
 
+InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData)
+{
+  switch (maskLayout.sampleStep[InpaintData->MaskChannelNo])
+  {
+    case 1:  return InpaintPrepareMaskImpl<1>(MaskDataPtr, maskLayout, planes, pitch, InpaintData);  /* planar: all VS4, YUV planar, Y8, RGBP */
+    case 2:  return InpaintPrepareMaskImpl<2>(MaskDataPtr, maskLayout, planes, pitch, InpaintData);  /* YUY2 luma */
+    case 3:  return InpaintPrepareMaskImpl<3>(MaskDataPtr, maskLayout, planes, pitch, InpaintData);  /* RGB24 */
+    case 4:  return InpaintPrepareMaskImpl<4>(MaskDataPtr, maskLayout, planes, pitch, InpaintData);  /* YUY2 chroma / RGB32 */
+    default: return InpaintPrepareMaskImpl<0>(MaskDataPtr, maskLayout, planes, pitch, InpaintData);  /* unknown: runtime fallback */
+  }
+}
+
 
 static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  const InpaintDataStruct *  InpaintData)
 /* Thin AVS wrapper: extracts plane pointers from the frame and calls the API-agnostic InpaintPrepareMask. */
@@ -2204,9 +2233,11 @@ void AddPreBlurValue(float G[], int x, int y, int Width, int Height, int Value, 
   }
 }
 
-
-int InpaintPixel(double RadiusX, double RadiusY, uint8_t u[], uint8_t chi[], int SampleStep, int Pitch, int x, int y, int Width, int Height, double CoherenceStrength, double CoherenceDirectionX, double CoherenceDirectionY)
+template<int SS>
+static int InpaintPixelImpl(double RadiusX, double RadiusY, uint8_t u[], uint8_t chi[], int SampleStep, int Pitch, int x, int y, int Width, int Height, double CoherenceStrength, double CoherenceDirectionX, double CoherenceDirectionY)
 {
+  // When the template-SampleStep is valid, it is used as a quasi-constexpr
+  const int stride = (SS > 0) ? SS : SampleStep;
   const int xmin = (x > RadiusX) ? static_cast<int>(std::ceil(x - RadiusX)) : 0;
   const int ymin = (y > RadiusY) ? static_cast<int>(std::ceil(y - RadiusY)) : 0;
   const int xmax = std::min(Width - 1, static_cast<int>(std::floor(x + RadiusX)));
@@ -2257,7 +2288,7 @@ int InpaintPixel(double RadiusX, double RadiusY, uint8_t u[], uint8_t chi[], int
         double w_arg = CohDirY * dx - dy_term;
         double w = (CohStr / std::sqrt(distSq)) * std::exp(-(w_arg * w_arg));
 
-        u0 += w * u_row[x0 * SampleStep];
+        u0 += w * u_row[x0 * stride];
         w0 += w;
       }
     }
@@ -2288,7 +2319,7 @@ int InpaintPixel(double RadiusX, double RadiusY, uint8_t u[], uint8_t chi[], int
         const double distSq = static_cast<double>(d2);
         /* No coherence ==> (11) collapses to 1/|x-y| */
         double w = 1.0 / std::sqrt(distSq);
-        u0 += w * u_row[x0 * SampleStep];
+        u0 += w * u_row[x0 * stride];
         w0 += w;
       }
     }
@@ -2301,6 +2332,17 @@ int InpaintPixel(double RadiusX, double RadiusY, uint8_t u[], uint8_t chi[], int
   return (iValue < 0) ? 0 : (iValue > 255) ? 255 : iValue;
 }
 
+
+const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDataStruct *  MaskData,  uint8_t *  FrameData[],  const int  FramePitch[])
+{
+  const int ls = InpaintData->srcLayout.sampleStep[0];
+  const int cs = InpaintData->srcLayout.sampleStep[1];
+  if (ls == 1 && cs == 1)  return InpaintCoreImpl<1,1>(InpaintData, MaskData, FrameData, FramePitch);  /* planar: YUV, Y, RGBP, RGBAP — all VS4 */
+  if (ls == 2 && cs == 4)  return InpaintCoreImpl<2,4>(InpaintData, MaskData, FrameData, FramePitch);  /* YUY2 */
+  if (ls == 3 && cs == 3)  return InpaintCoreImpl<3,3>(InpaintData, MaskData, FrameData, FramePitch);  /* RGB24 */
+  if (ls == 4 && cs == 4)  return InpaintCoreImpl<4,4>(InpaintData, MaskData, FrameData, FramePitch);  /* RGB32 */
+  return InpaintCoreImpl<0,0>(InpaintData, MaskData, FrameData, FramePitch);                           /* unknown: runtime fallback */
+}
 
 
 double  GetCoherenceData(double *  CoherenceDirectionX,  double *  CoherenceDirectionY,  double  TensorXX,  double  TensorXY,  double  TensorYY,  double  Sharpness)
