@@ -2309,44 +2309,70 @@ void  GetStructureTensor(double *  TensorXX,  double *  TensorXY,  double *  Ten
 
 
 
-bool  GetChannelTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,  float  Gchi[],  float  Gchiu[],  uint8_t  chi[],  int  x,  int  y,  int  Width,  int  Height,  double  BlurKernelX[],  int  BlurKernelXSize,  double  BlurKernelY[],  int  BlurKernelYSize)
-/* This (fairly) realized formula (21) of Bornemann/März-Paper */
-/* This function uses forward differences. Anything else must be done by providing an appropriate kernel and by modifying x,y */
+bool GetChannelTensor(double* TensorXX, double* TensorXY, double* TensorYY, float Gchi[], float Gchiu[], uint8_t chi[], int x, int y, int Width, int Height, double BlurKernelX[], int BlurKernelXSize, double BlurKernelY[], int BlurKernelYSize)
 {
-  double  xx, xy, yy, chi0;
-  double  dx, dy, Blur;
-  int  xmin, ymin, xmax, ymax, x0, y0;
-  float  chiC, chiS, chiE;
+  // This (fairly) realized formula (21) of Bornemann/März-Paper
+  // This function uses forward differences. Anything else must be done by providing an appropriate kernel and by modifying x,y
+  double xx = 0, xy = 0, yy = 0, chi0 = 0;
 
-  chi0 = xx = xy = yy = 0;
-  xmin = x;           if (BlurKernelXSize<xmin)  xmin = BlurKernelXSize;  xmin *= -1;
-  xmax = Width-x-2;   if (BlurKernelXSize<xmax)  xmax = BlurKernelXSize;
-  ymin = y;           if (BlurKernelYSize<ymin)  ymin = BlurKernelYSize;  ymin *= -1;
-  ymax = Height-y-2;  if (BlurKernelYSize<ymax)  ymax = BlurKernelYSize;
+  // Bounds calculation
+  int xmin = -(std::min(x, BlurKernelXSize));
+  int xmax = std::min(Width - x - 2, BlurKernelXSize);
+  int ymin = -(std::min(y, BlurKernelYSize));
+  int ymax = std::min(Height - y - 2, BlurKernelYSize);
+
   /* Time-critical loop !! */
-  for (y0=ymin ; y0<=ymax ; y0++)
+  for (int y0 = ymin; y0 <= ymax; y0++)
   {
-    for (x0=xmin ; x0<=xmax ; x0++)
+    const int currY = y + y0;
+    const int nextY = currY + 1;
+    const int rowOffset = Width * currY;
+    const int nextRowOffset = Width * nextY;
+
+    // Hoist pointers to the start of the "scanline" segment
+    const uint8_t* chiPtr = &chi[rowOffset + x];
+    const float* GchiPtr = &Gchi[rowOffset + x];
+    const float* GchiNext = &Gchi[nextRowOffset + x];
+    const float* GchiuPtr = &Gchiu[rowOffset + x];
+    const float* GchiuNext = &Gchiu[nextRowOffset + x];
+
+    const double blurY = BlurKernelY[y0];
+
+    for (int x0 = xmin; x0 <= xmax; x0++)
     {
-      if (chi[Width*(y+y0)+x+x0])  continue;  /* This line is due to the 1I_O(x) factor in the numerator of J_s,r(x) in formula (21) */
-      chiC = Gchi[Width*(y+y0  )+x+x0  ];  /*   0----------     These lines fetch K_s */
-      chiE = Gchi[Width*(y+y0  )+x+x0+1];  /*   |   C E                               */
-      chiS = Gchi[Width*(y+y0+1)+x+x0  ];  /*   |   S                                 */
-      if ((chiC==0.0) || (chiE==0.0) || (chiS==0.0))  continue;
-      dx = dy = static_cast<double>(Gchiu[Width*(y+y0)+x+x0])/static_cast<double>(chiC);  /* This is v_s(x) */
-      dx -= static_cast<double>(Gchiu[Width*(y+y0)+x+x0+1])/static_cast<double>(chiE);  /* This subtracts v_x(x+h*e1) */
-      dy -= static_cast<double>(Gchiu[Width*(y+y0+1)+x+x0])/static_cast<double>(chiS);  /* This subtracts v_x(x+h*e2) */
-      chi0 += Blur = static_cast<double>(BlurKernelX[x0])*static_cast<double>(BlurKernelY[y0]);  /* This is K_r */
-      xx += dx*dx*Blur;
-      xy += dx*dy*Blur;
-      yy += dy*dy*Blur;
+      // fast mask check
+      if (chiPtr[x0]) continue; // This line is due to the 1I_O(x) factor in the numerator of J_s,r(x) in formula (21)
+
+      // fetching neighbors (C = Center, E = East, S = South)
+      float chiC = GchiPtr[x0];       /* 0----------  These lines fetch K_s */
+      float chiE = GchiPtr[x0 + 1];   /* |   C E                            */
+      float chiS = GchiNext[x0];      /* |   S                              */
+
+      if (chiC == 0.0f || chiE == 0.0f || chiS == 0.0f) continue;
+
+      // This is v_s(x)
+      double vsC = static_cast<double>(GchiuPtr[x0]) / chiC;
+      // This subtracts v_x(x+h*e1)
+      double dx = vsC - (static_cast<double>(GchiuPtr[x0 + 1]) / chiE);
+      // This subtracts v_x(x+h*e2)
+      double dy = vsC - (static_cast<double>(GchiuNext[x0]) / chiS);
+
+      // weighting
+      double blur = BlurKernelX[x0] * blurY;
+      chi0 += blur; /* This is K_r */
+      xx += dx * dx * blur;
+      xy += dx * dy * blur;
+      yy += dy * dy * blur;
     }
   }
-  if (chi0==0.0)  return  false;
-  *TensorXX = xx/chi0;
-  *TensorXY = xy/chi0;
-  *TensorYY = yy/chi0;
-  return  true;
+
+  if (chi0 == 0.0) return false;
+
+  double invChi0 = 1.0 / chi0; // Use multiplication instead of 3 divisions
+  *TensorXX = xx * invChi0;
+  *TensorXY = xy * invChi0;
+  *TensorYY = yy * invChi0;
+  return true;
 }
 
 
