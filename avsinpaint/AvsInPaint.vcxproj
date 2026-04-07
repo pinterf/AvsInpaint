@@ -313,7 +313,7 @@
     <ClCompile Include="VSSInpaint.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="avisynth_c.h" />
+    <ClInclude Include="avisynth\avisynth_c.h" />
     <ClInclude Include="InpaintCore.h" />
     <ClInclude Include="vs\VapourSynth4.h" />
     <ClInclude Include="vs\VSHelper4.h" />

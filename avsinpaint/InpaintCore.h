@@ -1,7 +1,7 @@
 #pragma once
 /* InpaintCore.h — shared algorithm types, constants, and declarations.
    Included by both AVSInpaint.cpp (AviSynth wrapper) and VSSInpaint.cpp (VapourSynth 4 wrapper).
-   Contains no API-specific types except AVS_Clip, which is forward-declared when AviSynth_C.h
+   Contains no API-specific types except AVS_Clip, which is forward-declared when avisynth/avisynth_c.h
    has not been included.                                                                          */
 
 #include  <cstdint>
@@ -82,7 +82,7 @@ struct InpaintMaskDataStruct
 
 
 /* AVS_Clip is only stored as a pointer in InpaintDataStruct (MaskClip).
-   A forward declaration suffices when AviSynth_C.h has not been included (e.g. in VSSInpaint.cpp).
+   A forward declaration suffices when avisynth/avisynth_c.h has not been included (e.g. in VSSInpaint.cpp).
    The VS4 wrapper always sets MaskClip = nullptr and manages its mask node separately.           */
 #ifndef __AVISYNTH_C__
 typedef struct AVS_Clip AVS_Clip;

@@ -63,7 +63,7 @@ constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= real
 #include  <functional>
 #include  <vector>
 
-#include  "avisynth_c.h"
+#include  "avisynth/avisynth_c.h"
 #include  "InpaintCore.h"
 
 typedef  int32_t   Analyze_Sum1Type;  /* Data types used for summation in Analyze function */

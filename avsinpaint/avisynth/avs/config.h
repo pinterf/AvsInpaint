@@ -59,8 +59,12 @@
 #   define PPC32
 #elif defined(__riscv)
 #   define RISCV
+#elif defined(__loongarch__)
+#   define LOONGARCH
 #elif defined(__sparc_v9__)
 #   define SPARC
+#elif defined(__mips__)
+#   define MIPS
 #else
 #   error Unsupported CPU architecture.
 #endif
@@ -88,6 +92,11 @@
 #elif defined(__GNUC__)
 #   define GCC
 #   define AVS_FORCEINLINE __attribute__((always_inline)) inline
+#elif defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)
+// Intel C++ Compilers with MSVC command line interface will not appear here rather at _MSC_VER
+#   define AVS_FORCEINLINE inline
+#   undef __forceinline
+#   define __forceinline inline
 #else
 #   error Unsupported compiler.
 #   define AVS_FORCEINLINE inline
@@ -111,6 +120,18 @@
 #   define AVS_POSIX
 #else
 #   error Operating system unsupported.
+#endif
+
+#if defined(AVS_WINDOWS)
+#  if defined(X86_32) || defined(X86_64)
+#    define AVS_WINDOWS_X86
+#  elif defined(ARM64) || defined(ARM32)
+#    define AVS_WINDOWS_ARM
+#  endif
+#endif
+
+#if defined(MSVC) && !defined(AVS_WINDOWS_X86)
+#    error Unsupported combination of compiler, operating system, and machine architecture.
 #endif
 
 // useful warnings disabler macros for supported compilers
@@ -143,17 +164,24 @@
 
 #endif
 
-#if defined(AVS_POSIX)
-#define NEW_AVSVALUE
-#else
-#define NEW_AVSVALUE
-#endif
-
 #if defined(AVS_WINDOWS) && defined(_USING_V110_SDK71_)
 // Windows XP does not have proper initialization for
 // thread local variables.
 // Use workaround instead __declspec(thread)
 #define XP_TLS
+#endif
+
+#ifndef MSVC
+// GCC and Clang can be used on big endian systems, MSVC can't.
+#  if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#    define AVS_ENDIANNESS "little"
+#  elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#    define AVS_ENDIANNESS "big"
+#  else
+#    define AVS_ENDIANNESS "middle"
+#  endif
+#else
+#define AVS_ENDIANNESS "little"
 #endif
 
 #endif //AVS_CONFIG_H
