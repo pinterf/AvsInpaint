@@ -2095,20 +2095,24 @@ static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDa
   return  InpaintPrepareMask(MaskDataPtr, InpaintData->maskLayout, planes, pitch, InpaintData);
 }
 
-
-
-void  AddPreBlurValue(float  G[],  int  x,  int  y,  int  Width,  int  Height,  double  Value,  double  BlurXKernel[],  int  BlurXKernelSize,  double  BlurYKernel[],  int  BlurYKernelSize)
+void AddPreBlurValue(float G[], int x, int y, int Width, int Height, double Value, double BlurXKernel[], int BlurXKernelSize, double BlurYKernel[], int BlurYKernelSize)
 {
-  int  xmin, xmax, ymin, ymax, x0, y0;
+  const int xmin = (x < BlurXKernelSize) ? -x : -BlurXKernelSize;
+  const int xmax = ((Width - 1 - x) < BlurXKernelSize) ? (Width - 1 - x) : BlurXKernelSize;
+  const int ymin = (y < BlurYKernelSize) ? -y : -BlurYKernelSize;
+  const int ymax = ((Height - 1 - y) < BlurYKernelSize) ? (Height - 1 - y) : BlurYKernelSize;
 
-  xmin = -((BlurXKernelSize<x)?BlurXKernelSize:x);
-  xmax = (BlurXKernelSize<(Width-1)-x)?(BlurXKernelSize):((Width-1)-x);
-  ymin = -((BlurYKernelSize<y)?BlurYKernelSize:y);
-  ymax = (BlurYKernelSize<(Height-1)-y)?(BlurYKernelSize):((Height-1)-y);
-  /* Time-critical loop !! */
-  for (y0=ymin ; y0<=ymax ; y0++)
-   for (x0=xmin ; x0<=xmax ; x0++)
-   G[Width*(y+y0)+x+x0] += static_cast<float>(Value*(double)BlurXKernel[x0]*(double)BlurYKernel[y0]);
+  /* Time-critical loop */
+  for (int y0 = ymin; y0 <= ymax; ++y0)
+  {
+    float* G_row = &G[Width * (y + y0) + x];
+    const double weightedY = Value * BlurYKernel[y0];
+
+    for (int x0 = xmin; x0 <= xmax; ++x0)
+{
+      G_row[x0] += static_cast<float>(weightedY * BlurXKernel[x0]);
+    }
+  }
 }
 
 
