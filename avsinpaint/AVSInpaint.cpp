@@ -2116,71 +2116,99 @@ void AddPreBlurValue(float G[], int x, int y, int Width, int Height, double Valu
 }
 
 
-
-double  InpaintPixel(double  RadiusX,  double  RadiusY,  uint8_t  u[],  uint8_t  chi[],  int  Stride,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY)
+double InpaintPixel(double RadiusX, double RadiusY, uint8_t u[], uint8_t chi[], int SampleStep, int Pitch, int x, int y, int Width, int Height, double CoherenceStrength, double CoherenceDirectionX, double CoherenceDirectionY)
 {
-  int  xmin, xmax, ymin, ymax, x0, y0, dx, dy, dx2, dy2;
-  double  u0, w, w0, Radius;
+  const int xmin = (x > RadiusX) ? static_cast<int>(std::ceil(x - RadiusX)) : 0;
+  const int ymin = (y > RadiusY) ? static_cast<int>(std::ceil(y - RadiusY)) : 0;
+  const int xmax = std::min(Width - 1, static_cast<int>(std::floor(x + RadiusX)));
+  const int ymax = std::min(Height - 1, static_cast<int>(std::floor(y + RadiusY)));
 
-  u0 = 0;
-  w0 = 0;
-  xmin = (x>RadiusX)?static_cast<int>(std::ceil(x-RadiusX)):0;
-  ymin = (y>RadiusY)?static_cast<int>(std::ceil(y-RadiusY)):0;
-  xmax = static_cast<int>(std::floor(x+RadiusX));  if (xmax>=Width)  xmax = Width-1;
-  ymax = static_cast<int>(std::floor(y+RadiusY));  if (ymax>=Height)  ymax = Height-1;
-  if (CoherenceStrength>0.0)
+  double u0 = 0.0, w0 = 0.0;
+  const double RX2 = RadiusX * RadiusX;
+  const double RY2 = RadiusY * RadiusY;
+  const double RadiusSq = RX2 * RY2;
+
+  if (CoherenceStrength > 0.0)
   {
-    CoherenceDirectionX *= CoherenceStrength/std::sqrt(2.0*RadiusX*RadiusY);
-    CoherenceDirectionY *= CoherenceStrength/std::sqrt(2.0*RadiusX*RadiusY);
-    CoherenceStrength *= std::sqrt(2.0*std::atan(1.0));
-    RadiusX *= RadiusX;
-    RadiusY *= RadiusY;
-    Radius = RadiusX*RadiusY;
+    const double invNorm = CoherenceStrength / std::sqrt(2.0 * RadiusX * RadiusY);
+    const double CohDirX = CoherenceDirectionX * invNorm;
+    const double CohDirY = CoherenceDirectionY * invNorm;
+    const double CohStr = CoherenceStrength * 1.2533141373155; // sqrt(pi/2) = std::sqrt(2.0*std::atan(1.0));
+
     /* Time-critical loop !! */
-    for (y0=ymin ; y0<=ymax ; y0++)
+    for (int y0 = ymin; y0 <= ymax; ++y0)
     {
-      dy = y0-y;
-      dy2 = dy*dy;
-      for (x0=xmin ; x0<=xmax ; x0++)
+      const int dy = y0 - y;
+      const int dy2 = dy * dy;
+
+      // Hoist row-constant calculations
+      const double dy2RX2 = (double)dy2 * RX2;
+      const double dy_term = CohDirX * dy;
+
+      // Row pointers
+      const uint8_t* chi_row = &chi[Width * y0];
+      const uint8_t* u_row = &u[Pitch * y0];
+
+      for (int x0 = xmin; x0 <= xmax; ++x0)
       {
-        if (chi[Width*y0+x0])  continue;
-        dx = x0-x;
-        dx2 = dx*dx;
-        if (dx2*RadiusY+dy2*RadiusX>Radius)  continue;
+        if (chi_row[x0]) continue;
+
+        const int dx = x0 - x;
+        const int dx2 = dx * dx;
+
+        // Check integer ellipse bounds
+        if (dx2 * RY2 + dy2RX2 > RadiusSq) continue;
+
+        // Check integer zero (center pixel)
+        const int d2 = dx2 + dy2; // dy2 is hoisted from outer loop
+        if (d2 == 0) continue;
+
+        const double distSq = static_cast<double>(d2);
         /* Formular (11) of Bornemann/Maerz goes here */
-        w = CoherenceDirectionY*dx-CoherenceDirectionX*dy;
-        w = CoherenceStrength/std::sqrt(static_cast<double>(dx2+dy2))*std::exp(-w*w);
-        u0 += w*u[Pitch*y0+x0*Stride];
+        double w_arg = CohDirY * dx - dy_term;
+        double w = (CohStr / std::sqrt(distSq)) * std::exp(-(w_arg * w_arg));
+
+        u0 += w * u_row[x0 * SampleStep];
         w0 += w;
       }
     }
   }
-  if (w0==0.0)
+
+  // Fallback block (w0 == 0.0)
+  if (w0 == 0.0)
   {
-    RadiusX *= RadiusX;
-    RadiusY *= RadiusY;
-    Radius = RadiusX*RadiusY;
-    for (y0=ymin ; y0<=ymax ; y0++)
+    for (int y0 = ymin; y0 <= ymax; ++y0)
     {
-      dy = y0-y;
-      dy2 = dy*dy;
-      for (x0=xmin ; x0<=xmax ; x0++)
+      const int dy = y0 - y;
+      const int dy2 = dy * dy;
+      const double dy2RX2 = (double)dy2 * RX2;
+      const uint8_t* chi_row = &chi[Width * y0];
+      const uint8_t* u_row = &u[Pitch * y0];
+
+      for (int x0 = xmin; x0 <= xmax; ++x0)
       {
-        if (chi[Width*y0+x0])  continue;
-        dx = x0-x;
-        dx2 = dx*dx;
-        if (dx2*RadiusY+dy2*RadiusX>Radius)  continue;
+        if (chi_row[x0]) continue;
+        const int dx = x0 - x;
+        const int dx2 = dx * dx;
+        if (dx2 * RY2 + dy2RX2 > RadiusSq) continue;
+
+        // Check integer zero (center pixel)
+        const int d2 = dx2 + dy2; // dy2 is hoisted from outer loop
+        if (d2 == 0) continue;
+
+        const double distSq = static_cast<double>(d2);
         /* No coherence ==> (11) collapses to 1/|x-y| */
-        w = 1.0/std::sqrt(static_cast<double>(dx2+dy2));
-        u0 += w*u[Pitch*y0+x0*Stride];
+        double w = 1.0 / std::sqrt(distSq);
+        u0 += w * u_row[x0 * SampleStep];
         w0 += w;
       }
     }
   }
-  if (w0==0.0)  return  -1.0;
+
+  if (w0 == 0.0) return -1.0;
   u0 /= w0;
-  if (u0<0.0)  u0 = 0.0;  else  if (u0>255.0)  u0 = 255.0;  /* Just to be sure - maybe this is not necessary */
-  return  u0;
+  /* Just to be sure - maybe this is not necessary */
+  return (u0 < 0.0) ? 0.0 : (u0 > 255.0) ? 255.0 : u0;
 }
 
 
