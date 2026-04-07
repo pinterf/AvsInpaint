@@ -1,0 +1,15 @@
+<Solution>
+  <Configurations>
+    <BuildType Name="Debug" />
+    <BuildType Name="DebugClangCL" />
+    <BuildType Name="Release" />
+    <BuildType Name="ReleaseClangCL" />
+    <BuildType Name="RelWithDebInfo" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="AvsInPaint/AvsInPaint.vcxproj" Id="4cb1be69-c546-49d5-934d-7cb6d8994291">
+    <Platform Solution="DebugClangCL|x86" Project="x64" />
+    <Platform Solution="ReleaseClangCL|x86" Project="x64" />
+  </Project>
+</Solution>
