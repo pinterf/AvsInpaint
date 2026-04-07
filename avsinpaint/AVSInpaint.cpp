@@ -162,8 +162,8 @@ void  GetStructureTensor(double *  TensorXX,  double *  TensorXY,  double *  Ten
 bool  GetChannelTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,  float  Gchi[],  float  Gchiu[],  uint8_t  chi[],  int  x,  int  y,  int  Width,  int  Height,  double  BlurKernelX[],  int  BlurKernelXSize,  double  BlurKernelY[],  int  BlurKernelYSize);
 double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  double  Center);
 /* Deblend tools */
-void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height);
-void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
+void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height);
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
 int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo);
 /* Analyze tools */
 int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsigned int  FrameCount,
@@ -491,7 +491,7 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
   double  LumaRadiusX, LumaRadiusY, ChromaRadiusX, ChromaRadiusY, Sharpness;
   bool  ChromaTensor;
   /* Color space dependent values */
-  int  ChromaPixelWidth, ChromaPixelHeight, LumaStride, ChromaStride, ChromaChannelCount;
+  int  ChromaPixelWidth, ChromaPixelHeight, LumaSampleStep, ChromaSampleStep, ChromaChannelCount;
   /* Blurring stuff */
   double * LumaPreBlurXKernel, * LumaPreBlurYKernel, * ChromaPreBlurXKernel, * ChromaPreBlurYKernel;
   double * Luma4LumaPostBlurXKernel, * Luma4LumaPostBlurYKernel;
@@ -526,8 +526,8 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
   ChromaTensor = InpaintData->ChromaTensor;
   ChromaPixelWidth = InpaintData->ChromaPixelWidth;
   ChromaPixelHeight = InpaintData->ChromaPixelHeight;
-  LumaStride = InpaintData->srcLayout.sampleStep[0];
-  ChromaStride = InpaintData->srcLayout.sampleStep[1];
+  LumaSampleStep = InpaintData->srcLayout.sampleStep[0];
+  ChromaSampleStep = InpaintData->srcLayout.sampleStep[1];
   ChromaChannelCount = InpaintData->ChromaChannelCount;
   const bool isYUV             = InpaintData->isYUV;
   const bool isChromaSubsampled = InpaintData->isChromaSubsampled;
@@ -593,8 +593,8 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
   /* Prepare pointers */
   LumaPitch = FramePitch[0];
   ChromaPitch = FramePitch+1;
-  LumaData = FrameData[0]+LumaPitch*MaskData->OffsetY+MaskData->OffsetX*LumaStride;
-  for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)  ChromaDatas[ChannelNo] = FrameData[ChannelNo+1]+MaskData->OffsetY/ChromaPixelHeight*FramePitch[ChannelNo+1]+MaskData->OffsetX/ChromaPixelWidth*ChromaStride;
+  LumaData = FrameData[0]+LumaPitch*MaskData->OffsetY+MaskData->OffsetX*LumaSampleStep;
+  for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)  ChromaDatas[ChannelNo] = FrameData[ChannelNo+1]+MaskData->OffsetY/ChromaPixelHeight*FramePitch[ChannelNo+1]+MaskData->OffsetX/ChromaPixelWidth*ChromaSampleStep;
   /* Prepare blurred images */
   if (InpaintData->StaticMaskData)
   {
@@ -622,7 +622,7 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
             dataRow[x * LumaSampleStep],
             LumaPreBlurXKernel, LumaPreBlurXKernelSize,
             LumaPreBlurYKernel, LumaPreBlurYKernelSize);
-  }
+        }
       }
     }
   }
@@ -650,8 +650,8 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
               dataRow[x * ChromaSampleStep],
               ChromaPreBlurXKernel, ChromaPreBlurXKernelSize,
               ChromaPreBlurYKernel, ChromaPreBlurYKernelSize);
-    }
-  }
+          }
+        }
       }
     }
   }
@@ -1008,7 +1008,7 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
   DeblendDataStruct * DeblendData;
   AVS_VideoFrame * Frame;
   int  ChannelCount, Width, Height, PixelType, FramePitch[MaxChannelCount];
-  const int  * FrameStride, * FramePixelWidth, * FramePixelHeight;
+  const int  * FrameSampleStep, * FramePixelWidth, * FramePixelHeight;
   uint8_t * FrameData[MaxChannelCount], * AlphaData;
   int  ChannelNo;
 
@@ -1017,7 +1017,7 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
   PixelType = DeblendData->PixelType;
   Width = DeblendData->Width;
   Height = DeblendData->Height;
-  FrameStride    = DeblendData->layout.sampleStep;
+  FrameSampleStep    = DeblendData->layout.sampleStep;
   FramePixelWidth  = DeblendData->layout.pixelWidth;
   FramePixelHeight = DeblendData->layout.pixelHeight;
   Frame = avs_get_frame(FilterInfo->child,FrameNo);
@@ -1034,7 +1034,7 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
   {
     if (DeblendData->StaticLogoDataChannels[ChannelNo].empty())  break;
     if (!DeblendData->StaticAlphaDataChannels[ChannelNo].empty())  AlphaData = DeblendData->StaticAlphaDataChannels[ChannelNo].data();
-    DeblendStatic(FrameData[ChannelNo],DeblendData->StaticLogoDataChannels[ChannelNo].data(),AlphaData,FramePitch[ChannelNo],FrameStride[ChannelNo],Width/FramePixelWidth[ChannelNo],Height/FramePixelHeight[ChannelNo]);
+    DeblendStatic(FrameData[ChannelNo],DeblendData->StaticLogoDataChannels[ChannelNo].data(),AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],Width/FramePixelWidth[ChannelNo],Height/FramePixelHeight[ChannelNo]);
   }
   return  Frame;
 }
@@ -1046,9 +1046,9 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   DeblendDataStruct * DeblendData;
   AVS_VideoFrame * Frame, * LogoFrame, * AlphaFrame;
   int  ChannelCount, PixelType, Width, Height, FramePitch[MaxChannelCount];
-  const int  * FrameStride, * FramePixelWidth, * FramePixelHeight;
+  const int  * FrameSampleStep, * FramePixelWidth, * FramePixelHeight;
   int  LogoChannelCount, LogoPixelType, LogoFramePitch[MaxChannelCount];
-  const int  * LogoFrameStride;
+  const int  * LogoFrameSampleStep;
   int  AlphaChannelCount, AlphaPixelType, AlphaFramePitch[MaxChannelCount], AlphaPitch, AlphaSampleStep;
   uint8_t * FrameData[MaxChannelCount];
   const  uint8_t * LogoFrameData[MaxChannelCount], * AlphaFrameData[MaxChannelCount], * AlphaData;
@@ -1060,10 +1060,10 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   PixelType = DeblendData->PixelType;
   Width = DeblendData->Width;
   Height = DeblendData->Height;
-  FrameStride    = DeblendData->layout.sampleStep;
+  FrameSampleStep    = DeblendData->layout.sampleStep;
   FramePixelWidth  = DeblendData->layout.pixelWidth;
   FramePixelHeight = DeblendData->layout.pixelHeight;
-  LogoFrameStride  = DeblendData->logoLayout.sampleStep;
+  LogoFrameSampleStep  = DeblendData->logoLayout.sampleStep;
   AlphaSampleStep = DeblendData->AlphaSampleStep;
   Frame = avs_get_frame(FilterInfo->child,FrameNo);
   avs_make_writable(FilterInfo->env,&Frame);
@@ -1127,8 +1127,8 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   if (ChannelCount>LogoChannelCount)  ChannelCount = LogoChannelCount;
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
-    if (FramePixelWidth[ChannelNo]*FramePixelHeight[ChannelNo]==1)  DeblendDynamic(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameStride[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameStride[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height);
-    else  DeblendDynamicSubsampled(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameStride[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameStride[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height,FramePixelWidth[ChannelNo],FramePixelHeight[ChannelNo]);
+    if (FramePixelWidth[ChannelNo]*FramePixelHeight[ChannelNo]==1)  DeblendDynamic(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameSampleStep[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height);
+    else  DeblendDynamicSubsampled(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameSampleStep[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height,FramePixelWidth[ChannelNo],FramePixelHeight[ChannelNo]);
   }
   if (AlphaFrame)  avs_release_video_frame(AlphaFrame);
   if (LogoFrame)  avs_release_video_frame(LogoFrame);
@@ -2139,7 +2139,7 @@ void AddPreBlurValue(float G[], int x, int y, int Width, int Height, int Value, 
     const double weightedY = fValue * BlurYKernel[y0];
 
     for (int x0 = xmin; x0 <= xmax; ++x0)
-{
+    {
       G_row[x0] += static_cast<float>(weightedY * BlurXKernel[x0]);
     }
   }
@@ -2431,15 +2431,15 @@ double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  d
 /****************************************************************
                         Deblend tools
  ****************************************************************/
-void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height)
+void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height)
 /* Performs a simple deblend with given logo and alpha data         */
 {
   int  x;
   float  Value;
 
   AlphaPitch -= AlphaSampleStep*Width;
-  LogoPitch -= LogoStride*Width;
-  Pitch -= Stride*Width;
+  LogoPitch -= LogoSampleStep*Width;
+  Pitch -= SampleStep*Width;
   while (Height--)
   {
     x = Width;
@@ -2456,8 +2456,8 @@ void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8
         Data[0] = static_cast<uint8_t>(iValue);
       }
       AlphaData += AlphaSampleStep;
-      LogoData += LogoStride;
-      Data += Stride;
+      LogoData += LogoSampleStep;
+      Data += SampleStep;
     }
     AlphaData += AlphaPitch;
     LogoData += LogoPitch;
@@ -2467,7 +2467,7 @@ void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8
 
 
 
-void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight)
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight)
 /* Performs a simple deblend with given logo and alpha data, where
    the source and logo data are subsampled with respect to the
    alpha data.                                                      */
@@ -2479,8 +2479,8 @@ void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  co
   TotalAlpha = PixelWidth*PixelHeight*0xFF;
   Width /= PixelWidth;
   Height /= PixelHeight;
-  LogoPitch -= LogoStride*Width;
-  Pitch -= Stride*Width;
+  LogoPitch -= LogoSampleStep*Width;
+  Pitch -= SampleStep*Width;
   while (Height--)
   {
     x = Width;
@@ -2502,8 +2502,8 @@ void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  co
         iValue = std::min(std::max(iValue, 0), 255);
         Data[0] = static_cast<uint8_t>(iValue);
       }
-      LogoData += LogoStride;
-      Data += Stride;
+      LogoData += LogoSampleStep;
+      Data += SampleStep;
     }
     AlphaData += AlphaBigPitch;
     LogoData += LogoPitch;
@@ -2513,14 +2513,14 @@ void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  co
 
 
 
-void  DeblendStatic(uint8_t  Data[],  const  uint16_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  Width,  int  Height)
+void  DeblendStatic(uint8_t  Data[],  const  uint16_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  Width,  int  Height)
 /* This deblends a logo with preprocessed data (by
    DeblendStaticPrepare)                                            */
 {
   float  Value;
   int  W;
 
-  Pitch -= Stride*Width;
+  Pitch -= SampleStep*Width;
   while (Height--)
   {
     W = Width;
@@ -2537,7 +2537,7 @@ void  DeblendStatic(uint8_t  Data[],  const  uint16_t  LogoData[],  const  uint8
       }
       AlphaData++;
       LogoData++;
-      Data += Stride;
+      Data += SampleStep;
     }
     Data += Pitch;
   }
@@ -2677,7 +2677,7 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
   signed int  Value12;
   const  uint8_t * SrcData[MaxChannelCount];
   const  uint8_t * SrcPtr;
-  int  SrcPtrDelta, DividedWidth, SrcStride;
+  int  SrcPtrDelta, DividedWidth, SrcSampleStep;
   /* Variables for Phase 2 */
   uint8_t * ChannelMask;
   /* Downsampled logo mask for subsampled chroma channels (same layout as ChannelAlphaVector).
@@ -2736,9 +2736,9 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
       Sum1Ptr = Sum1[ChannelNo].data();
       Sum2Ptr = ComputeAlpha ? Sum2[ChannelNo].data() : nullptr;
       SrcPtr = SrcData[ChannelNo];
-      SrcStride = srcFmt.sampleStep[ChannelNo];
+      SrcSampleStep = srcFmt.sampleStep[ChannelNo];
       DividedWidth = Width/srcFmt.pixelWidth[ChannelNo];
-      SrcPtrDelta = FramePitch[ChannelNo]-DividedWidth*SrcStride;
+      SrcPtrDelta = FramePitch[ChannelNo]-DividedWidth*SrcSampleStep;
       /* This is the critical loop: Here all color values of all source frames are added up. Fast code will be rewarded with fast computation. */
       y = Height/srcFmt.pixelHeight[ChannelNo];
       if (ComputeAlpha)
@@ -2750,7 +2750,7 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
           {
             *(Sum1Ptr++) += Value12 = (static_cast<signed int>(SrcPtr[0]))-(static_cast<signed int>(0x80));  /* Shift all values in the range [-128..127] to reduce squared values */
             *(Sum2Ptr++) += Value12*Value12;
-            SrcPtr += SrcStride;
+            SrcPtr += SrcSampleStep;
           }
           SrcPtr += SrcPtrDelta;
         }
@@ -2763,7 +2763,7 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
           while (x--)
           {
             *(Sum1Ptr++) += (static_cast<signed int>(SrcPtr[0]))-(static_cast<signed int>(0x80));  /* Shift all values in the range [-128..127] for compatibility with the idea described above */
-            SrcPtr += SrcStride;
+            SrcPtr += SrcSampleStep;
           }
           SrcPtr += SrcPtrDelta;
         }
