@@ -147,8 +147,8 @@ bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Wid
 /* Inpaint tools */
 InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData);
 static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  const InpaintDataStruct *  InpaintData);
-void  AddPreBlurValue(float  G[],  int  x,  int  y,  int  Width,  int  Height,  double  Value,  double  BlurXKernel[],  int  BlurXKernelSize,  double  BlurYKernel[],  int  BlurYKernelYize);
-double  InpaintPixel(double  RadiusX,  double  RadiusY,  uint8_t  u[],  uint8_t  chi[],  int  Stride,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY);
+void  AddPreBlurValue(float  G[],  int  x,  int  y,  int  Width,  int  Height,  int  Value,  double  BlurXKernel[],  int  BlurXKernelSize,  double  BlurYKernel[],  int  BlurYKernelYize);
+int  InpaintPixel(double  RadiusX,  double  RadiusY,  uint8_t  u[],  uint8_t  chi[],  int  SampleStep,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY);
 double  GetCoherenceData(double *  CoherenceDirectionX,  double *  CoherenceDirectionY,  double  TensorXX,  double  TensorXY,  double  TensorYY,  double  Sharpness);
 void  GetStructureTensor(double *  TensorXX,  double *  TensorXY,  double *  TensorYY,
                          float *  GchiLuma,  float *  GchiuLuma,  uint8_t *  chiLuma,  double  LumaWeight,
@@ -483,7 +483,7 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
   int  LumaPitch;
   const int * ChromaPitch;
   int  x, y, PixelNo, ChannelNo;
-  double  CoherenceStrength, CoherenceDirectionX, CoherenceDirectionY, TensorXX, TensorXY, TensorYY, Value;
+  double  CoherenceStrength, CoherenceDirectionX, CoherenceDirectionY, TensorXX, TensorXY, TensorYY;
   const char * ErrorText = nullptr;
   /* Values given by the user */
   double  PixelWidth2, PixelHeight2;
@@ -606,21 +606,53 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
   }
   if (LumaWeight!=0.0)
   {
-    std::fill(GchiuLuma, GchiuLuma+LumaArea, 0.0f);
-    for (y=0 ; y<Height ; y++)
-      for (x=0 ; x<Width ; x++)
-        if (!chiLuma[y*Width+x])  AddPreBlurValue(GchiuLuma,x,y,Width,Height,1.0*LumaData[LumaPitch*y+x*LumaStride],LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
+    std::fill(GchiuLuma, GchiuLuma + LumaArea, 0.0f);
+
+    for (int y = 0; y < Height; ++y)
+    {
+      // Hoist pointers to the start of the row
+      const uint8_t* maskRow = &chiLuma[y * Width];
+      const uint8_t* dataRow = &LumaData[y * LumaPitch];
+
+      for (int x = 0; x < Width; ++x)
+      {
+        if (!maskRow[x])
+        {
+          AddPreBlurValue(GchiuLuma, x, y, Width, Height,
+            dataRow[x * LumaSampleStep],
+            LumaPreBlurXKernel, LumaPreBlurXKernelSize,
+            LumaPreBlurYKernel, LumaPreBlurYKernelSize);
+  }
+      }
+    }
   }
   if (ChromaWeight!=0.0)
   {
-    for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)
+    for (int ChannelNo = 0; ChannelNo < ChromaChannelCount; ChannelNo++)
     {
-      GchiuChroma = GchiuChromas[ChannelNo];
-      ChromaData = ChromaDatas[ChannelNo];
-      std::fill(GchiuChroma, GchiuChroma+ChromaArea, 0.0f);
-      for (y=0 ; y<CHeight ; y++)
-        for (x=0 ; x<CWidth ; x++)
-          if (!chiChroma[y*CWidth+x])  AddPreBlurValue(GchiuChroma,x,y,CWidth,CHeight,1.0*ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaStride],ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
+      float* GchiuC = GchiuChromas[ChannelNo];
+      const uint8_t* cData = ChromaDatas[ChannelNo];
+      const uint8_t* cMask = chiChroma; // Assuming chiChroma is shared or indexed
+      const int cPitch = ChromaPitch[ChannelNo];
+
+      std::fill(GchiuC, GchiuC + ChromaArea, 0.0f);
+
+      for (int y = 0; y < CHeight; y++)
+      {
+        // Hoist pointers to the start of the row
+        const uint8_t* dataRow = &cData[cPitch * y];
+        const uint8_t* maskRow = &cMask[y * CWidth];
+        for (int x = 0; x < CWidth; x++)
+        {
+          if (!maskRow[x])
+          {
+            AddPreBlurValue(GchiuC, x, y, CWidth, CHeight,
+              dataRow[x * ChromaSampleStep],
+              ChromaPreBlurXKernel, ChromaPreBlurXKernelSize,
+              ChromaPreBlurYKernel, ChromaPreBlurYKernelSize);
+    }
+  }
+      }
     }
   }
   /** MAIN LOOP **/
@@ -649,21 +681,20 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
         nullptr, 0, 1 /*n/a*/,
         nullptr, 0, 1 /*n/a*/);
     CoherenceStrength = GetCoherenceData(&CoherenceDirectionX,&CoherenceDirectionY,TensorXX/PixelWidth2,TensorXY,TensorYY/PixelHeight2,Sharpness);
-    Value = InpaintPixel(LumaRadiusX,LumaRadiusY,LumaData,chiLuma,LumaStride,LumaPitch,x,y,Width,Height,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
+    int iValue = InpaintPixel(LumaRadiusX,LumaRadiusY,LumaData,chiLuma,LumaSampleStep,LumaPitch,x,y,Width,Height,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
     /* What to do if inpainting failed ?? */
-    if (Value<0.0)
+    if (iValue<0)
     {
       #if (defined(InpaintFailError) && ((InpaintFailError)!=0))
       ErrorText = isYUV?"InpaintLogo internal error: inpainting luma pixel failed":"InpaintLogo internal error: inpainting first color channel pixel failed";
       break;
       #else
-      Value = 1.0*LumaData[LumaPitch*y+x*LumaStride];
+      iValue = LumaData[LumaPitch*y+x*LumaSampleStep];
       #endif
     }
-    Value = std::round(Value); // value is still double here
-    LumaData[LumaPitch*y+x*LumaStride] = static_cast<uint8_t>(Value);
-    if (GchiuLuma)  AddPreBlurValue(GchiuLuma,x,y,Width,Height,Value,LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
-    if (GchiLuma)  AddPreBlurValue(GchiLuma,x,y,Width,Height,1.0,LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
+    LumaData[LumaPitch*y+x*LumaSampleStep] = static_cast<uint8_t>(iValue);
+    if (GchiuLuma)  AddPreBlurValue(GchiuLuma,x,y,Width,Height,iValue,LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
+    if (GchiLuma)  AddPreBlurValue(GchiLuma,x,y,Width,Height,1,LumaPreBlurXKernel,LumaPreBlurXKernelSize,LumaPreBlurYKernel,LumaPreBlurYKernelSize);
     chiLuma[MaskPixelOrder[PixelNo]] = 0;
     if (!ChromaChannelCount)  continue;
     x /= ChromaPixelWidth;
@@ -686,8 +717,8 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
       for (ChannelNo=0 ; ChannelNo<ChromaChannelCount ; ChannelNo++)
       {
         ChromaData = ChromaDatas[ChannelNo];
-        Value = InpaintPixel(ChromaRadiusX,ChromaRadiusY,ChromaData,chiChroma,ChromaStride,ChromaPitch[ChannelNo],x,y,CWidth,CHeight,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
-        if (Value<0.0)
+        int iValue = InpaintPixel(ChromaRadiusX,ChromaRadiusY,ChromaData,chiChroma,ChromaSampleStep,ChromaPitch[ChannelNo],x,y,CWidth,CHeight,CoherenceStrength,CoherenceDirectionX,CoherenceDirectionY);
+        if (iValue<0)
         {
           /* When inpainting fails on a subsampled channel, then the mask (almost certainly) contains to small holes (not covered by chroma resolution). If otherwise, we have a serious problem with our code (as above in the luma case). */
           #if (defined(InpaintFailError) && ((InpaintFailError)!=0) && defined(InpaintChromaFailError) && ((InpaintChromaFailError)!=0))
@@ -710,16 +741,15 @@ const char*  InpaintCore(const InpaintDataStruct *  InpaintData,  InpaintMaskDat
           else
           #endif
           {
-            Value = 1.0*ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaStride];
+            iValue = ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaSampleStep];
           }
           #endif
         }
-        Value = std::round(Value);
-        ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaStride] = static_cast<uint8_t>(Value);
-        if (GchiuChromas[ChannelNo])  AddPreBlurValue(GchiuChromas[ChannelNo],x,y,CWidth,CHeight,Value,ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
+        ChromaData[ChromaPitch[ChannelNo]*y+x*ChromaSampleStep] = static_cast<uint8_t>(iValue);
+        if (GchiuChromas[ChannelNo])  AddPreBlurValue(GchiuChromas[ChannelNo],x,y,CWidth,CHeight,iValue,ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
       }
       if (ErrorText)  break;
-      if (GchiChroma)  AddPreBlurValue(GchiChroma,x,y,CWidth,CHeight,1.0,ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
+      if (GchiChroma)  AddPreBlurValue(GchiChroma,x,y,CWidth,CHeight,1,ChromaPreBlurXKernel,ChromaPreBlurXKernelSize,ChromaPreBlurYKernel,ChromaPreBlurYKernelSize);
     }
     if (chiChroma[CWidth*y+x])  chiChroma[CWidth*y+x]--;
   }
@@ -2068,7 +2098,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
       for (k=0 ; k<Width*Height ; k++)  *(Gchi++) = 0.0f;
       chi = MaskData->chiLuma.data();
       Gchi = MaskData->GchiLuma.data();
-      for (k=0 ; k<Width*Height ; k++)  if (!chi[k])  AddPreBlurValue(Gchi,k%Width,k/Width,Width,Height,1.0,InpaintData->LumaPreBlurXKernel,InpaintData->LumaPreBlurXKernelSize,InpaintData->LumaPreBlurYKernel,InpaintData->LumaPreBlurYKernelSize);
+      for (k=0 ; k<Width*Height ; k++)  if (!chi[k])  AddPreBlurValue(Gchi,k%Width,k/Width,Width,Height,1,InpaintData->LumaPreBlurXKernel,InpaintData->LumaPreBlurXKernelSize,InpaintData->LumaPreBlurYKernel,InpaintData->LumaPreBlurYKernelSize);
     }
     if (!MaskData->GchiChroma.empty())
     {
@@ -2095,18 +2125,18 @@ static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDa
   return  InpaintPrepareMask(MaskDataPtr, InpaintData->maskLayout, planes, pitch, InpaintData);
 }
 
-void AddPreBlurValue(float G[], int x, int y, int Width, int Height, double Value, double BlurXKernel[], int BlurXKernelSize, double BlurYKernel[], int BlurYKernelSize)
+void AddPreBlurValue(float G[], int x, int y, int Width, int Height, int Value, double BlurXKernel[], int BlurXKernelSize, double BlurYKernel[], int BlurYKernelSize)
 {
   const int xmin = (x < BlurXKernelSize) ? -x : -BlurXKernelSize;
   const int xmax = ((Width - 1 - x) < BlurXKernelSize) ? (Width - 1 - x) : BlurXKernelSize;
   const int ymin = (y < BlurYKernelSize) ? -y : -BlurYKernelSize;
   const int ymax = ((Height - 1 - y) < BlurYKernelSize) ? (Height - 1 - y) : BlurYKernelSize;
-
+  const double fValue = Value;
   /* Time-critical loop */
   for (int y0 = ymin; y0 <= ymax; ++y0)
   {
     float* G_row = &G[Width * (y + y0) + x];
-    const double weightedY = Value * BlurYKernel[y0];
+    const double weightedY = fValue * BlurYKernel[y0];
 
     for (int x0 = xmin; x0 <= xmax; ++x0)
 {
@@ -2116,7 +2146,7 @@ void AddPreBlurValue(float G[], int x, int y, int Width, int Height, double Valu
 }
 
 
-double InpaintPixel(double RadiusX, double RadiusY, uint8_t u[], uint8_t chi[], int SampleStep, int Pitch, int x, int y, int Width, int Height, double CoherenceStrength, double CoherenceDirectionX, double CoherenceDirectionY)
+int InpaintPixel(double RadiusX, double RadiusY, uint8_t u[], uint8_t chi[], int SampleStep, int Pitch, int x, int y, int Width, int Height, double CoherenceStrength, double CoherenceDirectionX, double CoherenceDirectionY)
 {
   const int xmin = (x > RadiusX) ? static_cast<int>(std::ceil(x - RadiusX)) : 0;
   const int ymin = (y > RadiusY) ? static_cast<int>(std::ceil(y - RadiusY)) : 0;
@@ -2205,10 +2235,11 @@ double InpaintPixel(double RadiusX, double RadiusY, uint8_t u[], uint8_t chi[], 
     }
   }
 
-  if (w0 == 0.0) return -1.0;
+  if (w0 == 0.0) return -1; // weight 0, invalid, cannot divide
   u0 /= w0;
+  const int iValue = static_cast<int>(u0 + 0.5);
   /* Just to be sure - maybe this is not necessary */
-  return (u0 < 0.0) ? 0.0 : (u0 > 255.0) ? 255.0 : u0;
+  return (iValue < 0) ? 0 : (iValue > 255) ? 255 : iValue;
 }
 
 
