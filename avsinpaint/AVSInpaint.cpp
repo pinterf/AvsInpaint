@@ -1416,7 +1416,7 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
   ErrorText = nullptr;
   DistFcnData = nullptr;
   /* Check all video properties */
-  if (!(avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_yv16(VideoInfo) || avs_is_yv24(VideoInfo) || avs_is_y8(VideoInfo) || avs_is_rgb32(VideoInfo)))  ErrorText = "DistanceFunction: Source clip must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGB32)";
+  if (!(avs_is_yuy2(VideoInfo) || avs_is_yv12(VideoInfo) || avs_is_yv16(VideoInfo) || avs_is_yv24(VideoInfo) || avs_is_y8(VideoInfo) || avs_is_rgb32(VideoInfo) || avs_is_planar_rgba(VideoInfo)))  ErrorText = "DistanceFunction: Source clip must have luma channel (YUY2 or YV12/16/24/8) or alpha channel (RGB32, RGBAP)";
   else if (!(avs_has_video(VideoInfo) && VideoInfo->num_frames && VideoInfo->width && VideoInfo->height))  ErrorText = "DistanceFunction: Source clip has no video";
   else
   {
@@ -1427,7 +1427,7 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
   if (!ErrorText)
   {
     DistFcnData->PixelType = VideoInfo->pixel_type;
-    DistFcnData->LumaChannelNo = avs_is_rgb32(VideoInfo)?3:0;
+    DistFcnData->LumaChannelNo = (avs_is_rgb32(VideoInfo) || avs_is_planar_rgba(VideoInfo))?3:0;
     DistFcnData->Width = VideoInfo->width;
     DistFcnData->Height = VideoInfo->height;
     DistFcnData->layout = FrameLayoutFromPixelType(DistFcnData->PixelType);
@@ -1532,7 +1532,7 @@ const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleSte
 {
   switch (SampleStep)
   {
-    case 1:  return DistanceFunctionCoreImpl<1>(data, pitch, SampleStep, width, height, scale, scaleSign, pixelWidth, pixelHeight);  /* planar: all VS4, YUV planar, Y8, RGBP */
+    case 1:  return DistanceFunctionCoreImpl<1>(data, pitch, SampleStep, width, height, scale, scaleSign, pixelWidth, pixelHeight);  /* planar: all VS4, YUV planar, Y8, RGBP, RGBAP alpha */
     case 2:  return DistanceFunctionCoreImpl<2>(data, pitch, SampleStep, width, height, scale, scaleSign, pixelWidth, pixelHeight);  /* YUY2 luma */
     case 3:  return DistanceFunctionCoreImpl<3>(data, pitch, SampleStep, width, height, scale, scaleSign, pixelWidth, pixelHeight);  /* RGB24 */
     case 4:  return DistanceFunctionCoreImpl<4>(data, pitch, SampleStep, width, height, scale, scaleSign, pixelWidth, pixelHeight);  /* YUY2 chroma / RGB32 */
