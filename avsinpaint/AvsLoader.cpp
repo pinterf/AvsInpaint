@@ -16,10 +16,10 @@
    static void* lib_sym(const char* name) { return dlsym(s_hLib, name); }
 #  ifdef __APPLE__
    static bool lib_open()
-       { s_hLib = dlopen("libAviSynth.dylib", RTLD_NOW | RTLD_LOCAL); return s_hLib != nullptr; }
+       { s_hLib = dlopen("libavisynth.dylib", RTLD_NOW | RTLD_LOCAL); return s_hLib != nullptr; }
 #  else
    static bool lib_open()
-       { s_hLib = dlopen("libAviSynth.so",    RTLD_NOW | RTLD_LOCAL); return s_hLib != nullptr; }
+       { s_hLib = dlopen("libavisynth.so",    RTLD_NOW | RTLD_LOCAL); return s_hLib != nullptr; }
 #  endif
 #endif
 
