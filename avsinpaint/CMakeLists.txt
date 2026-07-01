@@ -9,18 +9,29 @@ endif()
 set(ProjectName "${PluginName}")
 project(${ProjectName} LANGUAGES CXX)
 
+option(ENABLE_AVISYNTH "Build AviSynth interface (requires bundled avisynth/ headers)" ON)
+
 set(AvsInPaint_Sources
-  AVSInpaint.cpp
-  AvsLoader.cpp
   VSSInpaint.cpp
 )
 
+if(ENABLE_AVISYNTH)
+  list(APPEND AvsInPaint_Sources
+    AVSInpaint.cpp
+    AvsLoader.cpp
+  )
+endif()
+
 # MSVC: include the module-definition file (export name aliases) and version resource.
+# DEF is only needed for AviSynth — it aliases the Win32 stdcall-decorated entry points.
+# VapourSynthPluginInit2 is __cdecl and needs no alias.
 # MinGW: the DEF is NOT used — --enable-stdcall-fixup (set in root CMakeLists) handles
 # stdcall decoration stripping automatically, and the DEF's _avisynth_c_plugin_init@4
 # internal symbol doesn't exist in 64-bit MinGW builds.
 if(MSVC)
-  list(APPEND AvsInPaint_Sources AvsInPaint.def)
+  if(ENABLE_AVISYNTH)
+    list(APPEND AvsInPaint_Sources AvsInPaint.def)
+  endif()
   list(APPEND AvsInPaint_Sources AvsInPaint.rc)
 endif()
 
@@ -62,5 +73,11 @@ endif()
 
 include(GNUInstallDirs)
 
+if(ENABLE_AVISYNTH)
+  set(AVSINPAINT_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/avisynth")
+else()
+  set(AVSINPAINT_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/vapoursynth")
+endif()
+
 INSTALL(TARGETS ${ProjectName}
-        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/avisynth")
+        LIBRARY DESTINATION "${AVSINPAINT_INSTALL_DIR}")
