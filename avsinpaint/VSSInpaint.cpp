@@ -86,7 +86,7 @@ static const char *  SetupInpaintData(InpaintDataStruct *  InpaintData,
     InpaintData->ChromaPixelHeight = 0;
   }
   InpaintData->isYUV             = (srcFmt.colorFamily == ColorFamily::YUV);
-  InpaintData->isChromaSubsampled = (InpaintData->ChromaPixelWidth > 1) && (InpaintData->ChromaPixelHeight > 1);
+  InpaintData->isChromaSubsampled = (InpaintData->ChromaPixelWidth > 1) || (InpaintData->ChromaPixelHeight > 1);
   InpaintData->maskLayout     = maskFmt;
   InpaintData->MaskChannelNo  = maskChannelNo;
   InpaintData->FlipMask       = flipMask;

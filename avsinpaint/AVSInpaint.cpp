@@ -286,7 +286,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       InpaintData->ChromaPixelHeight = 0;
     }
     InpaintData->isYUV             = (InpaintData->PixelType & AVS_CS_YUV) != 0;
-    InpaintData->isChromaSubsampled = (InpaintData->ChromaPixelWidth > 1) && (InpaintData->ChromaPixelHeight > 1);
+    InpaintData->isChromaSubsampled = (InpaintData->ChromaPixelWidth > 1) || (InpaintData->ChromaPixelHeight > 1);
     /* Parameters of mask clip: Only if mask is dynamic */
     if (!ErrorText && (MaskVideoInfo->num_frames>1))
     {
