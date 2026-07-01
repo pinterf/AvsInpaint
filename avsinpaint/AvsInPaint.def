@@ -1,4 +1,5 @@
 LIBRARY AvsInpaint
 EXPORTS
 	avisynth_c_plugin_init@4 = _avisynth_c_plugin_init@4
+	avisynth_c_plugin_init2@4 = _avisynth_c_plugin_init2@4
 	VapourSynthPluginInit2

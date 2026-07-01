@@ -58,13 +58,14 @@ constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= real
 #include  <cstdint>
 #include  <cfloat>
 #include  <cstring>
+#include  <string>
 #include  <algorithm>
 #include  <array>
 #include  <functional>
 #include  <type_traits>
 #include  <vector>
 
-#include  "avisynth/avisynth_c.h"
+#include  "AvsLoader.h"
 #include  "InpaintCore.h"
 
 typedef  int32_t   Analyze_Sum1Type;  /* Data types used for summation in Analyze function */
@@ -181,11 +182,19 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
 
 AVSC_EXPORT  const char *  AVSC_CC  avisynth_c_plugin_init(AVS_ScriptEnvironment *  Env)
 {
+  if (!avs_loader_init())  return  "AvsInPaint: failed to load AviSynth library";
   avs_add_function(Env,"InpaintLogo","c[Mask]c[Radius]f[Sharpness]f[PreBlur]f[PostBlur]f[ChromaWeight]f[PreBlurSize]f[PostBlurSize]f[ChromaTensor]b[PixelAspect]f[Steps]i",Inpaint_Create,nullptr);
   avs_add_function(Env,"DeblendLogo","cc[Alpha]c",Deblend_Create,nullptr);
   avs_add_function(Env,"AnalyzeLogo","c[Mask]c[ComputeAlpha]b[DeviationWeight]f[SubsamplingWeight]f",Analyze_Create,nullptr);
   avs_add_function(Env,"DistanceFunction","c[Scale]f[PixelAspect]f",DistanceFunction_Create,nullptr);
   return  "Logo Inpainting Filter";
+}
+
+
+AVSC_EXPORT  const char *  AVSC_CC  avisynth_c_plugin_init2(AVS_ScriptEnvironment *  Env)
+{
+  g_is_v11_64bit_data_capable_host = true;
+  return  avisynth_c_plugin_init(Env);
 }
 
 
@@ -2247,7 +2256,7 @@ static int InpaintPixelImpl(double RadiusX, double RadiusY, uint8_t u[], uint8_t
   const double RX2 = RadiusX * RadiusX;
   const double RY2 = RadiusY * RadiusY;
   const double RadiusSq = RX2 * RY2;
-
+  
   if (CoherenceStrength > 0.0)
   {
     const double invNorm = CoherenceStrength / std::sqrt(2.0 * RadiusX * RadiusY);
@@ -2321,9 +2330,9 @@ static int InpaintPixelImpl(double RadiusX, double RadiusY, uint8_t u[], uint8_t
         double w = 1.0 / std::sqrt(distSq);
         u0 += w * u_row[x0 * stride];
         w0 += w;
+        }
       }
     }
-  }
 
   if (w0 == 0.0) return -1; // weight 0, invalid, cannot divide
   u0 /= w0;
