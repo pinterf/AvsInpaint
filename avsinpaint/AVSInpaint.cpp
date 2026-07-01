@@ -41,7 +41,7 @@
 //#define  VersionString  "2008.02.23"
 //#define  VersionString  "2019.06.27 1.2"
 #define  VersionString  "2021.10.25 1.3"
-#define  LegalInfoString  "* Logo Inpainting for AviSynth by Wolfgang Boiger *\nVersion " VersionString " ;  built  " __DATE__ "  " __TIME__ " .\nCopyright (C)  2007, 2008  Wolfgang Boiger, Berlin.\nLicensed under GNU GPL version 2 with possible geographic restrictions.\nThis software comes without any warranty, even without warranty\nof merchantability or fitness for a particular purpose.\nSee files 'AVSInpaint.htm' and 'GNUGPLv2.txt' for details."
+//#define  LegalInfoString  "* Logo Inpainting for AviSynth by Wolfgang Boiger *\nVersion " VersionString " ;  built  " __DATE__ "  " __TIME__ " .\nCopyright (C)  2007, 2008  Wolfgang Boiger, Berlin.\nLicensed under GNU GPL version 2 with possible geographic restrictions.\nThis software comes without any warranty, even without warranty\nof merchantability or fitness for a particular purpose.\nSee files 'AVSInpaint.htm' and 'GNUGPLv2.txt' for details."
 
 
 constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= reallocation of memory), how many elemnts to add */
@@ -254,7 +254,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   PAR = avs_is_float(avs_array_elt(Args,10))?avs_as_float(avs_array_elt(Args,10)):1.0;
   if (PAR<=0.0)  ErrorText = "InpaintLogo: Pixel aspect ratio must be positive";
   Steps = avs_is_int(avs_array_elt(Args,11))?avs_as_int(avs_array_elt(Args,11)):(-1);
-  if (Steps<(-1))  ErrorText = "InpaintLogo: Steps count may not be lower than -1" "\n\n" LegalInfoString;
+  if (Steps<-1)  ErrorText = "InpaintLogo: Steps count may not be lower than -1";
 
   /* Prepare data structure */
   if (!MaskClip)  MaskClip = avs_take_clip(avs_array_elt(Args,0),Env);
@@ -1187,9 +1187,9 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   AVS_VideoInfo DestVideoInfoBuf = {};  DestVideoInfo = &DestVideoInfoBuf;
   ComputeAlpha = avs_is_bool(avs_array_elt(Args,2)) ? (avs_as_bool(avs_array_elt(Args,2)) != 0) : true;
   DeviationWeight = avs_is_float(avs_array_elt(Args,3))?avs_as_float(avs_array_elt(Args,3)):0.5;
-  if (DeviationWeight<0.0)  return  avs_new_value_error("Analyze: Deviation weight must not be negative" "\n\n" LegalInfoString);
+  if (DeviationWeight<0.0)  return  avs_new_value_error("Analyze: Deviation weight must not be negative");
   SubsamplingWeight = avs_is_float(avs_array_elt(Args,4))?avs_as_float(avs_array_elt(Args,4)):0.5;
-  if (SubsamplingWeight<0.0)  return  avs_new_value_error("Analyze: Subsampling weight must not be negative" "\n\n" LegalInfoString);
+  if (SubsamplingWeight<0.0)  return  avs_new_value_error("Analyze: Subsampling weight must not be negative");
 
   SrcClipValue = avs_array_elt(Args,0);
   SrcClip = avs_take_clip(SrcClipValue,Env);
@@ -1407,7 +1407,7 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
   /* Extract values from AVS_Value container, throw errors if necessary */
   Scale = avs_is_float(avs_array_elt(Args,1))?avs_as_float(avs_array_elt(Args,1)):1.0;
   PAR = avs_is_float(avs_array_elt(Args,2))?avs_as_float(avs_array_elt(Args,2)):1.0;
-  if (PAR<=0.0)  return  avs_new_value_error("DistanceFunction: Pixel aspect ratio must be positive" "\n\n" LegalInfoString);
+  if (PAR<=0.0)  return  avs_new_value_error("DistanceFunction: Pixel aspect ratio must be positive");
   /* Create new filter */
   DestClip = avs_new_c_filter(Env,&FilterInfo,avs_array_elt(Args,0),1);
   if (!DestClip)  return  avs_new_value_error("DistanceFunction: Could not create filter");
