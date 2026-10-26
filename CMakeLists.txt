@@ -95,7 +95,11 @@ IF( MSVC )  # Check for Visual Studio
 ELSE()
 
   if(WIN32)
-    SET( CMAKE_SHARED_LINKER_FLAGS "-Wl,--enable-stdcall-fixup" )
+    # Append: the toolchain file may have set flags of its own (e.g. "-static" for
+    # llvm-mingw, which links libc++ and libunwind statically).
+    # --enable-stdcall-fixup strips the stdcall decoration of the 32-bit MinGW
+    # exports; it is a no-op for x64/ARM64 (no stdcall there).
+    SET( CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--enable-stdcall-fixup" )
   elseif(APPLE)
     SET( CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-undefined,error" )
   elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

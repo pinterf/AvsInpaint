@@ -333,5 +333,8 @@ ASALocalRun/
 Win32/
 DebugVSOnly/
 ReleaseVSOnly/
+out/
+Build/arm64_mingw/
+Build/aarch64/
 .claude/
 avsinpaint-build/
