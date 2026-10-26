@@ -331,5 +331,7 @@ ASALocalRun/
 
 # Project-specific
 Win32/
+DebugVSOnly/
+ReleaseVSOnly/
 .claude/
 avsinpaint-build/
