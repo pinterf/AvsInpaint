@@ -1057,6 +1057,8 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Static_GetFrame(AVS_FilterInfo *  FilterInfo,
   AlphaData = nullptr;
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
+    /* Logo with embedded alpha: the source's alpha channel has no logo data and is left untouched */
+    if (DeblendData->StaticLogoDataChannels[ChannelNo].empty())  break;
     if (!DeblendData->StaticAlphaDataChannels[ChannelNo].empty())  AlphaData = DeblendData->StaticAlphaDataChannels[ChannelNo].data();
     DeblendStatic(FrameData[ChannelNo],DeblendData->StaticLogoDataChannels[ChannelNo].data(),AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],Width/FramePixelWidth[ChannelNo],Height/FramePixelHeight[ChannelNo]);
   }
