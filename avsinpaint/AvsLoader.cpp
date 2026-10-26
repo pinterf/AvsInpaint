@@ -57,6 +57,9 @@ avs_prop_get_int_func        avs_prop_get_int        = nullptr;
 
 bool g_is_v11_64bit_data_capable_host = false;
 
+// Classic AviSynth 2.6 has no planar RGB: these stand in for the missing exports.
+static int AVSC_CC avs_no_planar_rgb(const AVS_VideoInfo*) { return 0; }
+
 // ---------------------------------------------------------------------------
 // avs_loader_init
 // ---------------------------------------------------------------------------
@@ -74,8 +77,6 @@ bool avs_loader_init()
     LOAD(avs_is_yv16);
     LOAD(avs_is_yv24);
     LOAD(avs_is_y8);
-    LOAD(avs_is_planar_rgb);
-    LOAD(avs_is_planar_rgba);
     LOAD(avs_get_frame);
     LOAD(avs_release_video_frame);
     LOAD(avs_release_clip);
@@ -89,6 +90,11 @@ bool avs_loader_init()
     LOAD(avs_get_write_ptr_p);
     LOAD(avs_set_to_clip);
 #undef LOAD
+    // Optional: AviSynth+ only (classic AviSynth 2.6 has no planar RGB formats)
+    avs_is_planar_rgb  = (avs_is_planar_rgb_func)lib_sym("avs_is_planar_rgb");
+    avs_is_planar_rgba = (avs_is_planar_rgba_func)lib_sym("avs_is_planar_rgba");
+    if (!avs_is_planar_rgb)   avs_is_planar_rgb  = avs_no_planar_rgb;
+    if (!avs_is_planar_rgba)  avs_is_planar_rgba = avs_no_planar_rgb;
     avs_get_frame_props_ro = (avs_get_frame_props_ro_func)lib_sym("avs_get_frame_props_ro");
     avs_prop_get_int       = (avs_prop_get_int_func)lib_sym("avs_prop_get_int");
     if (!avs_get_frame_props_ro || !avs_prop_get_int)  avs_get_frame_props_ro = nullptr, avs_prop_get_int = nullptr;

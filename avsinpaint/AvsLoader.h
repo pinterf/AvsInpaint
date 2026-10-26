@@ -44,6 +44,7 @@ extern avs_is_yv12_func             avs_is_yv12;
 extern avs_is_yv16_func             avs_is_yv16;
 extern avs_is_yv24_func             avs_is_yv24;
 extern avs_is_y8_func               avs_is_y8;
+// AviSynth+ only; on classic AviSynth 2.6 these are stubs that always return 0.
 extern avs_is_planar_rgb_func       avs_is_planar_rgb;
 extern avs_is_planar_rgba_func      avs_is_planar_rgba;
 
