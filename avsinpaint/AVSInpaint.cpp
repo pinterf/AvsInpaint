@@ -176,7 +176,7 @@ bool  GetChannelTensor(double *  TensorXX,  double *  TensorXY,  double *  Tenso
 double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  double  Center);
 /* Deblend tools */
 void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height);
-void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo);
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo,  SubsampledAlphaCache &  Cache);
 /* Analyze tools */
 int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsigned int  FrameCount,
                  std::function<bool(unsigned int, const uint8_t*[], int[])>  fetchSrcFrame,
@@ -1184,10 +1184,11 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
     LogoChannelCount = 3;
   }
   if (ChannelCount>LogoChannelCount)  ChannelCount = LogoChannelCount;
+  SubsampledAlphaCache  AlphaCache;
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
     if (FramePixelWidth[ChannelNo]*FramePixelHeight[ChannelNo]==1)  DeblendDynamic(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameSampleStep[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height);
-    else  DeblendDynamicSubsampled(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameSampleStep[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height,FramePixelWidth[ChannelNo],FramePixelHeight[ChannelNo],DeblendData->ChromaLoc,ChannelNo);
+    else  DeblendDynamicSubsampled(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameSampleStep[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height,FramePixelWidth[ChannelNo],FramePixelHeight[ChannelNo],DeblendData->ChromaLoc,ChannelNo,AlphaCache);
   }
   if (AlphaFrame)  avs_release_video_frame(AlphaFrame);
   if (LogoFrame)  avs_release_video_frame(LogoFrame);
@@ -2734,17 +2735,89 @@ void  DownsampleAlpha(float  Dest[],  const float  Src[],  int  Width,  int  Hei
 
 
 
-void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo)
+/* DownsampleAlpha on 8-bit alpha data for subsampling factors up to 2 (all supported formats).
+   The kernels then only have weights k/2 or k/4 per axis, so integer sums scaled by a power of 2
+   give exactly the float result of DownsampleAlpha, without a full-resolution float copy. */
+static void  DownsampleAlpha8(float  Dest[],  const uint8_t  Src[],  int  Pitch,  int  Step,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  SitingX,  int  SitingY)
+{
+  const int  ChWidth = Width / PixelWidth, ChHeight = Height / PixelHeight;
+  const int  WeightX = (PixelWidth == 1) ? 1 : (SitingX ? 4 : 2);
+  const int  WeightY = (PixelHeight == 1) ? 1 : (SitingY ? 4 : 2);
+  const float  Norm = 1.0f / static_cast<float>(WeightX * WeightY);
+  std::vector<uint16_t>  RowBuf(static_cast<size_t>(3) * ChWidth);
+  uint16_t * Rows[3] = { RowBuf.data(), RowBuf.data() + ChWidth, RowBuf.data() + 2*ChWidth };
+  int  RowY[3] = { -1, -1, -1 };
+  /* Horizontal sums of luma row y, cached in one of three row buffers */
+  auto  HSum = [&](int  y) -> const uint16_t *
+  {
+    for (int k = 0 ; k < 3 ; k++)  if (RowY[k] == y)  return  Rows[k];
+    const int  k = y % 3;
+    uint16_t * Out = Rows[k];
+    RowY[k] = y;
+    const uint8_t * r = Src + static_cast<ptrdiff_t>(Pitch) * y;
+    if (PixelWidth == 1)
+      for (int x = 0 ; x < ChWidth ; x++)  Out[x] = r[x*Step];
+    else if (!SitingX)
+      for (int x = 0 ; x < ChWidth ; x++)  Out[x] = static_cast<uint16_t>(r[2*x*Step] + r[(2*x+1)*Step]);
+    else
+    {
+      /* [1,2,1] around the left luma sample; the sample left of the frame is clamped to the edge */
+      Out[0] = static_cast<uint16_t>(3*r[0] + r[Step]);
+      for (int x = 1 ; x < ChWidth ; x++)  Out[x] = static_cast<uint16_t>(r[(2*x-1)*Step] + 2*r[2*x*Step] + r[(2*x+1)*Step]);
+    }
+    return  Out;
+  };
+  for (int y = 0 ; y < ChHeight ; y++)
+  {
+    float * d = Dest + static_cast<size_t>(ChWidth) * y;
+    if (PixelHeight == 1)
+    {
+      const uint16_t * a = HSum(y);
+      for (int x = 0 ; x < ChWidth ; x++)  d[x] = static_cast<float>(a[x]) * Norm;
+    }
+    else if (!SitingY)
+    {
+      const uint16_t * a = HSum(2*y), * b = HSum(2*y + 1);
+      for (int x = 0 ; x < ChWidth ; x++)  d[x] = static_cast<float>(a[x] + b[x]) * Norm;
+    }
+    else
+    {
+      /* [1,2,1] around the top (SitingY 1) or bottom (SitingY 2) luma row, clamped to the frame */
+      const int  c = 2*y + ((SitingY == 2) ? 1 : 0);
+      const uint16_t * a = HSum(std::max(c - 1, 0)), * b = HSum(c), * e = HSum(std::min(c + 1, Height - 1));
+      for (int x = 0 ; x < ChWidth ; x++)  d[x] = static_cast<float>(a[x] + 2*b[x] + e[x]) * Norm;
+    }
+  }
+}
+
+
+
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo,  SubsampledAlphaCache &  Cache)
 /* Performs a simple deblend with given logo and alpha data, where
    the source and logo data are subsampled with respect to the
    alpha data.                                                      */
 {
-  std::vector<float>  FullAlpha(static_cast<size_t>(Width) * Height), Alpha(static_cast<size_t>(Width / PixelWidth) * (Height / PixelHeight));
-  for (int y = 0 ; y < Height ; y++)
-    for (int x = 0 ; x < Width ; x++)
-      FullAlpha[static_cast<size_t>(Width)*y + x] = static_cast<float>(AlphaData[static_cast<ptrdiff_t>(AlphaPitch)*y + x*AlphaSampleStep]);
-  DownsampleAlpha(Alpha.data(), FullAlpha.data(), Width, Height, PixelWidth, PixelHeight, ChromaLoc, ChannelNo);
-  const float * AlphaPtr = Alpha.data();
+  int  SitingX, SitingY;
+  ChromaSiting(ChromaLoc, ChannelNo, SitingX, SitingY);
+  if (PixelWidth == 1)  SitingX = 0;
+  if (PixelHeight == 1)  SitingY = 0;
+  const int  Key = ((SitingX*3 + SitingY)*8 + PixelWidth)*8 + PixelHeight;
+  if (Cache.Key != Key)
+  {
+    Cache.Alpha.resize(static_cast<size_t>(Width / PixelWidth) * (Height / PixelHeight));
+    if (PixelWidth <= 2 && PixelHeight <= 2)
+      DownsampleAlpha8(Cache.Alpha.data(), AlphaData, AlphaPitch, AlphaSampleStep, Width, Height, PixelWidth, PixelHeight, SitingX, SitingY);
+    else
+    {
+      std::vector<float>  FullAlpha(static_cast<size_t>(Width) * Height);
+      for (int y = 0 ; y < Height ; y++)
+        for (int x = 0 ; x < Width ; x++)
+          FullAlpha[static_cast<size_t>(Width)*y + x] = static_cast<float>(AlphaData[static_cast<ptrdiff_t>(AlphaPitch)*y + x*AlphaSampleStep]);
+      DownsampleAlpha(Cache.Alpha.data(), FullAlpha.data(), Width, Height, PixelWidth, PixelHeight, ChromaLoc, ChannelNo);
+    }
+    Cache.Key = Key;
+  }
+  const float * AlphaPtr = Cache.Alpha.data();
   Width /= PixelWidth;
   Height /= PixelHeight;
   LogoPitch -= LogoSampleStep*Width;

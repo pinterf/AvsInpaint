@@ -176,8 +176,16 @@ double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  d
 
 /* Deblend tools — no API types; all frame data via plain pointers */
 
+/* Downsampled alpha of the current frame, shared by the chroma channels with the same siting
+   (U and V, except for DV). Create one per frame and pass it to every DeblendDynamicSubsampled call. */
+struct  SubsampledAlphaCache
+{
+  std::vector<float>  Alpha;
+  int  Key = -1;
+};
+
 void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height);
-void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo);
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo,  SubsampledAlphaCache &  Cache);
 
 /* Chroma placement name (case-insensitive) -> ChromaLocation. nullptr or "auto" gives ChromaLoc_Auto,
    unknown names ChromaLoc_Invalid. Names as in AviSynth+ ChromaInPlacement and VapourSynth chromaloc_s. */

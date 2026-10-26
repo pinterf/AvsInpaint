@@ -842,6 +842,7 @@ static const VSFrame *  VS_CC  vsDeblendGetFrame(int  n,  int  activationReason,
     const int  logoChannelCount = alphaFrame ? d->logoLayout.channelCount : d->logoLayout.channelCount - 1;
     if (ChannelCount > logoChannelCount)  ChannelCount = logoChannelCount;
 
+    SubsampledAlphaCache  alphaCache;
     for (int ch = 0 ; ch < ChannelCount ; ch++)
     {
       if (d->layout.pixelWidth[ch] * d->layout.pixelHeight[ch] == 1)
@@ -854,7 +855,7 @@ static const VSFrame *  VS_CC  vsDeblendGetFrame(int  n,  int  activationReason,
           FramePitch[ch], d->layout.sampleStep[ch],
           LogoPitch[ch], d->logoLayout.sampleStep[ch],
           alphaPitch, alphaSampleStep, d->Width, d->Height,
-          d->layout.pixelWidth[ch], d->layout.pixelHeight[ch], d->ChromaLoc, ch);
+          d->layout.pixelWidth[ch], d->layout.pixelHeight[ch], d->ChromaLoc, ch, alphaCache);
     }
 
     if (alphaFrame)  vsapi->freeFrame(alphaFrame);
