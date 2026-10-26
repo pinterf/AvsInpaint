@@ -152,8 +152,10 @@ struct InpaintDataStruct
 
 /*****  Pure function declarations (implementations in AVSInpaint.cpp)  *****/
 
-/* Format helper */
+/* Format helper — AviSynth pixel_type based, only available in AviSynth builds */
+#ifdef ENABLE_AVISYNTH
 FrameLayout  FrameLayoutFromPixelType(int  PixelType);
+#endif
 
 /* Kernel builder (used during filter creation by both AVS and VS4 wrappers) */
 double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  double  Center);

@@ -1,3 +1,7 @@
+// The loader is only needed for the AviSynth wrapper: compiled out entirely
+// when the target is built without AviSynth support (ENABLE_AVISYNTH not defined).
+#ifdef ENABLE_AVISYNTH
+
 #include "AvsLoader.h"
 
 // ---------------------------------------------------------------------------
@@ -88,3 +92,5 @@ bool avs_loader_init()
     // any code still references its symbols causes undefined behaviour, and
     // the OS reclaims all handles anyway at process exit.
 }
+
+#endif  // ENABLE_AVISYNTH

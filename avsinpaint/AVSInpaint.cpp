@@ -65,8 +65,10 @@ constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= real
 #include  <type_traits>
 #include  <vector>
 
-#include  "AvsLoader.h"
 #include  "InpaintCore.h"
+#ifdef ENABLE_AVISYNTH
+#include  "AvsLoader.h"
+#endif
 
 typedef  int32_t   Analyze_Sum1Type;  /* Data types used for summation in Analyze function */
 typedef  uint32_t  Analyze_Sum2Type;
@@ -85,6 +87,7 @@ struct FMMHeapStruct
 };
 
 
+#ifdef ENABLE_AVISYNTH
 /* Structure for deblending - with pre-computed data for static logo */
 struct DeblendDataStruct
 {
@@ -106,6 +109,7 @@ struct DeblendDataStruct
     FlipAlpha(false)
   {}
 };
+#endif  // ENABLE_AVISYNTH
 
 
 /* Some data for the distance function filter */
@@ -120,6 +124,7 @@ struct DistanceFunctionDataStruct
 
 /*****  Function declaration  *****/
 
+#ifdef ENABLE_AVISYNTH
 /** AviSynth stuff **/
 /* Inpaint callbacks */
 AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Args,  void *  Data);
@@ -139,16 +144,20 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
 AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInfo,  int  FrameNo);
 void  AVSC_CC  DistanceFunction_Free(AVS_FilterInfo *  FilterInfo);
 
-/** Own functions **/
-/* Common functions */
+/* AviSynth-specific helpers */
 FrameLayout  FrameLayoutFromPixelType(int  PixelType);
 bool  AvsGetFramePlanes(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  uint8_t **  Planes,  int *  Pitch);
 bool  AvsGetFramePlanesRO(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  const uint8_t **  Planes,  int *  Pitch);
+static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  const InpaintDataStruct *  InpaintData);
+int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const AVS_VideoInfo *  LogoVideoInfo,  const AVS_VideoInfo *  AlphaVideoInfo);
+#endif  // ENABLE_AVISYNTH
+
+/** Own functions **/
+/* Common functions */
 bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight);
 bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<int> &  HeapVec);
 /* Inpaint tools */
 InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData);
-static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  const InpaintDataStruct *  InpaintData);
 void  AddPreBlurValue(float  G[],  int  x,  int  y,  int  Width,  int  Height,  int  Value,  double  BlurXKernel[],  int  BlurXKernelSize,  double  BlurYKernel[],  int  BlurYKernelYize);
 template<int SS> static int  InpaintPixelImpl(double  RadiusX,  double  RadiusY,  uint8_t  u[],  uint8_t  chi[],  int  SampleStep,  int  Pitch,  int  x,  int  y,  int  Width,  int  Height,  double  CoherenceStrength,  double  CoherenceDirectionX,  double  CoherenceDirectionY);
 double  GetCoherenceData(double *  CoherenceDirectionX,  double *  CoherenceDirectionY,  double  TensorXX,  double  TensorXY,  double  TensorYY,  double  Sharpness);
@@ -166,7 +175,6 @@ double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  d
 /* Deblend tools */
 void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height);
 void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
-int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo);
 /* Analyze tools */
 int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsigned int  FrameCount,
                  std::function<bool(unsigned int, const uint8_t*[], int[])>  fetchSrcFrame,
@@ -180,6 +188,7 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
 /*****  Function implementation  *****/
 
 
+#ifdef ENABLE_AVISYNTH
 AVSC_EXPORT  const char *  AVSC_CC  avisynth_c_plugin_init(AVS_ScriptEnvironment *  Env)
 {
   if (!avs_loader_init())  return  "AvsInPaint: failed to load AviSynth library";
@@ -196,9 +205,11 @@ AVSC_EXPORT  const char *  AVSC_CC  avisynth_c_plugin_init2(AVS_ScriptEnvironmen
   g_is_v11_64bit_data_capable_host = true;
   return  avisynth_c_plugin_init(Env);
 }
+#endif  // ENABLE_AVISYNTH
 
 
 
+#ifdef ENABLE_AVISYNTH
 /****************************************************************
                      Inpaint callbacks
  ****************************************************************/
@@ -484,6 +495,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   Inpaint_Free(FilterInfo);
   return  avs_new_value_error(ErrorText);
 }
+#endif  // ENABLE_AVISYNTH
 
 
 // With Luma and Chroma SampleStep template
@@ -769,6 +781,7 @@ static const char*  InpaintCoreImpl(const InpaintDataStruct *  InpaintData,  Inp
 
 
 
+#ifdef ENABLE_AVISYNTH
 AVS_VideoFrame *  AVSC_CC  Inpaint_GetFrame(AVS_FilterInfo *  FilterInfo,  int  FrameNo)
 {
   InpaintDataStruct * InpaintData;
@@ -862,8 +875,10 @@ void  AVSC_CC  Inpaint_Free(AVS_FilterInfo *  FilterInfo)
   }
   FilterInfo->user_data = nullptr;
 }
+#endif  // ENABLE_AVISYNTH
 
 
+#ifdef ENABLE_AVISYNTH
 /****************************************************************
                        Deblend callbacks
  ****************************************************************/
@@ -1157,9 +1172,11 @@ void  AVSC_CC  Deblend_Free(AVS_FilterInfo *  FilterInfo)
     delete DeblendData;
   }
 }
+#endif  // ENABLE_AVISYNTH
 
 
 
+#ifdef ENABLE_AVISYNTH
 /****************************************************************
                       Analyze callbacks
  ****************************************************************/
@@ -1396,9 +1413,11 @@ void  AVSC_CC  Analyze_Free(AVS_FilterInfo *  FilterInfo)
 {
   if (FilterInfo->user_data)  avs_release_video_frame(static_cast<AVS_VideoFrame*>(FilterInfo->user_data));
 }
+#endif  // ENABLE_AVISYNTH
 
 
 
+#ifdef ENABLE_AVISYNTH
 /****************************************************************
                   DistanceFunction callbacks
  ****************************************************************/
@@ -1466,6 +1485,7 @@ AVS_Value  AVSC_CC  DistanceFunction_Create(AVS_ScriptEnvironment *  Env,  AVS_V
   DistanceFunction_Free(FilterInfo);
   return  avs_new_value_error(ErrorText);
 }
+#endif  // ENABLE_AVISYNTH
 
 
 template<int SS>
@@ -1551,6 +1571,7 @@ const char *  DistanceFunctionCore(uint8_t *  data,  int  pitch,  int  SampleSte
 
 
 
+#ifdef ENABLE_AVISYNTH
 AVS_VideoFrame *  AVSC_CC  DistanceFunction_GetFrame(AVS_FilterInfo *  FilterInfo,  int  FrameNo)
 {
   DistanceFunctionDataStruct * DistFcnData = static_cast<DistanceFunctionDataStruct*>(FilterInfo->user_data);
@@ -1586,12 +1607,14 @@ void  AVSC_CC  DistanceFunction_Free(AVS_FilterInfo *  FilterInfo)
 {
   if (FilterInfo->user_data)  delete static_cast<DistanceFunctionDataStruct*>(FilterInfo->user_data);
 }
+#endif  // ENABLE_AVISYNTH
 
 
 
 /****************************************************************
                       Common functions
  ****************************************************************/
+#ifdef ENABLE_AVISYNTH
 FrameLayout  FrameLayoutFromPixelType(int  PixelType)
 /* Returns the pixel-format-derived layout for the given AviSynth pixel_type constant.
    channelCount == 0 signals an unsupported / unknown format.                          */
@@ -1766,6 +1789,7 @@ bool  AvsGetFramePlanesRO(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  con
   }
   return  true;
 }
+#endif  // ENABLE_AVISYNTH
 
 
 
@@ -2212,6 +2236,7 @@ InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  co
 }
 
 
+#ifdef ENABLE_AVISYNTH
 static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  const InpaintDataStruct *  InpaintData)
 /* Thin AVS wrapper: extracts plane pointers from the frame and calls the API-agnostic InpaintPrepareMask. */
 {
@@ -2221,6 +2246,7 @@ static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDa
     return  Frame ? InpaintMaskResult::FrameError : InpaintMaskResult::NoMask;
   return  InpaintPrepareMask(MaskDataPtr, InpaintData->maskLayout, planes, pitch, InpaintData);
 }
+#endif  // ENABLE_AVISYNTH
 
 void AddPreBlurValue(float G[], int x, int y, int Width, int Height, int Value, double BlurXKernel[], int BlurXKernelSize, double BlurYKernel[], int BlurYKernelSize)
 {
@@ -2721,6 +2747,7 @@ int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataC
 
 
 
+#ifdef ENABLE_AVISYNTH
 int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
                               AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,
                               const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo)
@@ -2753,6 +2780,7 @@ int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDa
                                 logoPlanes, logoPitch,
                                 alphaPlane, alphaPitch, alphaSampleStep);
 }
+#endif  // ENABLE_AVISYNTH
 
 
 

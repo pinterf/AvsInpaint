@@ -1,6 +1,11 @@
 #pragma once
 // AvsLoader.h — Minimal cross-platform runtime loader for the AviSynth C API.
 // Include this file instead of "avisynth/avisynth_c.h" in AviSynth wrapper code.
+//
+// The whole file is AviSynth-specific: it is compiled out entirely when the
+// target is built without AviSynth support (ENABLE_AVISYNTH not defined).
+
+#ifdef ENABLE_AVISYNTH
 
 // AVSC_NO_DECLSPEC turns every AVSC_API(ret, name) into
 //   typedef ret (AVSC_CC *name_func);
@@ -83,3 +88,5 @@ AVSC_INLINE AVS_VideoFrame* avs_new_video_frame(AVS_ScriptEnvironment* env,
 AVSC_INLINE int avs_is_same_colorspace(const AVS_VideoInfo* x,
                                          const AVS_VideoInfo* y)
     { return x->pixel_type == y->pixel_type || (avs_is_yv12(x) && avs_is_yv12(y)); }
+
+#endif  // ENABLE_AVISYNTH
