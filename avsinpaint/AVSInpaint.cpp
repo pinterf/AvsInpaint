@@ -98,15 +98,15 @@ struct DeblendDataStruct
   std::array<std::vector<uint8_t>, MaxChannelCount>         StaticAlphaDataChannels;
   /* Dynamic logo */
   AVS_Clip * LogoClip, * AlphaClip;
-  int  LogoPixelType, AlphaPixelType, LogoFrameCount, AlphaFrameCount, AlphaSampleStep;
+  int  LogoPixelType, AlphaPixelType, LogoFrameCount, AlphaFrameCount, AlphaSampleStep, AlphaChannelNo;
   FrameLayout  logoLayout;
-  bool  FlipAlpha;
+  bool  FlipLogo, FlipAlpha;  /* storage direction differs from the source (packed RGB is bottom-up) */
   /* Is static? Check (LogoClip)     Separate alpha clip? Check (AlphaClip) */
   DeblendDataStruct() :
     PixelType(0), Width(0), Height(0), layout(),
     LogoClip(nullptr), AlphaClip(nullptr),
-    LogoPixelType(0), AlphaPixelType(0), LogoFrameCount(0), AlphaFrameCount(0), AlphaSampleStep(0), logoLayout(),
-    FlipAlpha(false)
+    LogoPixelType(0), AlphaPixelType(0), LogoFrameCount(0), AlphaFrameCount(0), AlphaSampleStep(0), AlphaChannelNo(0), logoLayout(),
+    FlipLogo(false), FlipAlpha(false)
   {}
 };
 #endif  // ENABLE_AVISYNTH
@@ -149,7 +149,7 @@ FrameLayout  FrameLayoutFromPixelType(int  PixelType);
 bool  AvsGetFramePlanes(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  uint8_t **  Planes,  int *  Pitch);
 bool  AvsGetFramePlanesRO(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  const uint8_t **  Planes,  int *  Pitch);
 static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  const InpaintDataStruct *  InpaintData);
-int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const AVS_VideoInfo *  LogoVideoInfo,  const AVS_VideoInfo *  AlphaVideoInfo);
+int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const AVS_VideoInfo *  LogoVideoInfo,  const AVS_VideoInfo *  AlphaVideoInfo,  int  AlphaChannel,  bool  FlipLogo,  bool  FlipAlpha);
 #endif  // ENABLE_AVISYNTH
 
 /** Own functions **/
@@ -189,6 +189,21 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
 
 
 #ifdef ENABLE_AVISYNTH
+/* FrameLayout channel index of the mask/alpha in a Mask/Alpha clip: the luma of YUY2/YV12/16/24/Y8,
+   the alpha of RGB32/RGBAP (RGB channels are stored B,G,R,A). Other formats are rejected by the callers. */
+static int  AvsMaskChannel(int  PixelType)
+{
+  const FrameLayout  L = FrameLayoutFromPixelType(PixelType);
+  return  ((L.colorFamily == ColorFamily::RGB) && (L.channelCount == 4)) ? 3 : 0;
+}
+
+/* Packed RGB (RGB24/RGB32) is stored bottom-up, every other format top-down */
+static bool  AvsIsBottomUp(const AVS_VideoInfo *  vi)
+{
+  return  avs_is_rgb(vi) && !avs_is_planar(vi);
+}
+
+
 AVSC_EXPORT  const char *  AVSC_CC  avisynth_c_plugin_init(AVS_ScriptEnvironment *  Env)
 {
   if (!avs_loader_init())  return  "AvsInPaint: failed to load AviSynth library";
@@ -319,7 +334,7 @@ AVS_Value  AVSC_CC  Inpaint_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       InpaintData->MaskFrameCount = 0;
     }
     InpaintData->maskLayout = FrameLayoutFromPixelType(MaskVideoInfo->pixel_type);
-    InpaintData->MaskChannelNo = avs_is_yuv(MaskVideoInfo)?0:3; // y8 is yuv as well here; planar RGBA alpha is also channel 3
+    InpaintData->MaskChannelNo = AvsMaskChannel(MaskVideoInfo->pixel_type);  /* no Mask given: the source alpha */
     // only packed RGB is upside-down, planar is not
     InpaintData->FlipMask = ((avs_is_rgb(VideoInfo) && !avs_is_planar(VideoInfo)) != (avs_is_rgb(MaskVideoInfo) && !avs_is_planar(MaskVideoInfo)));
     InpaintData->MaskPixelType = MaskVideoInfo->pixel_type;
@@ -902,6 +917,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   SrcVideoInfo = avs_get_video_info(SrcClip);
   LogoVideoInfo = avs_get_video_info(LogoClip);
   AlphaVideoInfo = AlphaClip?avs_get_video_info(AlphaClip):nullptr;
+  const int  AlphaChannel = AlphaVideoInfo ? AvsMaskChannel(AlphaVideoInfo->pixel_type) : 0;
   /* Check if all color spaces and dimensions and so on are correct */
   ErrorText = nullptr;
   if (!(avs_has_video(SrcVideoInfo) && SrcVideoInfo->num_frames && SrcVideoInfo->width && SrcVideoInfo->height))  ErrorText = "Deblend: Source clip has no video";
@@ -928,7 +944,8 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       DeblendData->LogoFrameCount = LogoVideoInfo->num_frames;
       DeblendData->AlphaFrameCount = AlphaVideoInfo?AlphaVideoInfo->num_frames:0;
       // only packed RGB is upside down, planar is not.
-      DeblendData->FlipAlpha = AlphaVideoInfo ? ((avs_is_rgb(LogoVideoInfo) && !avs_is_planar(LogoVideoInfo)) != (avs_is_rgb(AlphaVideoInfo) && !avs_is_planar(AlphaVideoInfo))) : false;
+      DeblendData->FlipLogo = AvsIsBottomUp(LogoVideoInfo) != AvsIsBottomUp(SrcVideoInfo);
+      DeblendData->FlipAlpha = AlphaVideoInfo ? (AvsIsBottomUp(AlphaVideoInfo) != AvsIsBottomUp(SrcVideoInfo)) : false;
       DeblendData->layout = FrameLayoutFromPixelType(SrcVideoInfo->pixel_type);
     }
     else  ErrorText = "Deblend: Could not allocate memory";
@@ -977,7 +994,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
         logoPtrs[ChannelNo] = DeblendData->StaticLogoDataChannels[ChannelNo].empty() ? nullptr : DeblendData->StaticLogoDataChannels[ChannelNo].data();
         alphaPtrs[ChannelNo] = DeblendData->StaticAlphaDataChannels[ChannelNo].empty() ? nullptr : DeblendData->StaticAlphaDataChannels[ChannelNo].data();
       }
-      if (0>AvsDeblendStaticPrepare(logoPtrs,alphaPtrs,LogoFrame,AlphaFrame,LogoVideoInfo,AlphaVideoInfo))  ErrorText = "Deblend: Could not gather frame data pointers";
+      if (0>AvsDeblendStaticPrepare(logoPtrs,alphaPtrs,LogoFrame,AlphaFrame,LogoVideoInfo,AlphaVideoInfo,AlphaChannel,DeblendData->FlipLogo,DeblendData->FlipAlpha))  ErrorText = "Deblend: Could not gather frame data pointers";
     }
     if (AlphaFrame)  avs_release_video_frame(AlphaFrame);
     if (LogoFrame)  avs_release_video_frame(LogoFrame);
@@ -994,7 +1011,8 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       if (AlphaClip)
       {
         const FrameLayout  alphaLayout = FrameLayoutFromPixelType(AlphaVideoInfo->pixel_type);
-        DeblendData->AlphaSampleStep = alphaLayout.sampleStep[avs_is_rgb32(AlphaVideoInfo)?3:0];
+        DeblendData->AlphaChannelNo = AlphaChannel;
+        DeblendData->AlphaSampleStep = alphaLayout.sampleStep[AlphaChannel];
       }
       else  DeblendData->AlphaSampleStep = DeblendData->logoLayout.sampleStep[3];  /* If this happens, LogoClip *must* be RGBA */
       DeblendData->LogoClip = LogoClip;
@@ -1096,6 +1114,14 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   LogoPixelType = DeblendData->LogoPixelType;
   LogoFrame = avs_get_frame(DeblendData->LogoClip,(FrameNo<DeblendData->LogoFrameCount)?FrameNo:(DeblendData->LogoFrameCount-1));
   LogoChannelCount = AvsGetFramePlanesRO(LogoFrame,DeblendData->logoLayout,LogoFrameData,LogoFramePitch) ? DeblendData->logoLayout.channelCount : 0;
+  if (DeblendData->FlipLogo)
+  {
+    for (ChannelNo=0 ; ChannelNo<LogoChannelCount ; ChannelNo++)
+    {
+      LogoFrameData[ChannelNo] += static_cast<ptrdiff_t>(Height/DeblendData->logoLayout.pixelHeight[ChannelNo] - 1) * LogoFramePitch[ChannelNo];
+      LogoFramePitch[ChannelNo] *= -1;
+    }
+  }
   /* Maybe we need the alpha frame, maybe it's part of the logo (rgbA) */
   if (DeblendData->AlphaClip)
   {
@@ -1122,8 +1148,8 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
     if (!Frame)  ErrorText = "Deblend: Could not get source frame";
   }
   /* Check some assertions */
-  if (!ErrorText && (AlphaPixelType==AVS_CS_BGR32) && (AlphaChannelCount!=4))  ErrorText = "Deblend internal error: RGBA clip has no alpha channel";
-  if (!ErrorText && (AlphaChannelCount==0) && (LogoPixelType!=AVS_CS_BGR32))  ErrorText = "Deblend internal error: No alpha channel at all";
+  if (!ErrorText && DeblendData->AlphaClip && (AlphaChannelCount<=DeblendData->AlphaChannelNo))  ErrorText = "Deblend internal error: Alpha clip has no such plane";
+  if (!ErrorText && (AlphaChannelCount==0) && (DeblendData->logoLayout.channelCount!=4))  ErrorText = "Deblend internal error: No alpha channel at all";
   if (ErrorText)
   {
     FilterInfo->error = ErrorText;
@@ -1134,8 +1160,8 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   }
   if (AlphaFrame)
   {
-    AlphaData = AlphaFrameData[(AlphaPixelType==AVS_CS_BGR32)?3:0];  /* If Alpha is not RGBA, the first channel (Y) is the effective alpha channel */
-    AlphaPitch = AlphaFramePitch[(AlphaPixelType==AVS_CS_BGR32)?3:0];
+    AlphaData = AlphaFrameData[DeblendData->AlphaChannelNo];
+    AlphaPitch = AlphaFramePitch[DeblendData->AlphaChannelNo];
     if (DeblendData->FlipAlpha)
     {
       AlphaData += (DeblendData->Height-1)*AlphaPitch;
@@ -1225,6 +1251,8 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
   MaskClip = MaskGiven?avs_take_clip(avs_array_elt(Args,1),Env):nullptr;
   SrcVideoInfo = avs_get_video_info(SrcClip);
   MaskVideoInfo = MaskGiven?avs_get_video_info(MaskClip):nullptr;
+  const FrameLayout  maskFmt = FrameLayoutFromPixelType(MaskGiven ? MaskVideoInfo->pixel_type : SrcVideoInfo->pixel_type);
+  const int  MaskChannel = AvsMaskChannel(MaskGiven ? MaskVideoInfo->pixel_type : SrcVideoInfo->pixel_type);
   if (!(avs_has_video(SrcVideoInfo) && SrcVideoInfo->num_frames))  ErrorText = "Analyze: Source clip has no video";
   else if (!(avs_is_rgb24(SrcVideoInfo) || avs_is_rgb32(SrcVideoInfo) || avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo) || avs_is_planar_rgb(SrcVideoInfo) || avs_is_planar_rgba(SrcVideoInfo)))  ErrorText = "Analyze: Color space unknown (RGB24, RGB32, RGBP, RGBAP, YUY2, YV12/16/24/8 allowed only)";
   else if ((SrcVideoInfo->width==0) || (SrcVideoInfo->height==0) || (SrcVideoInfo->width==1 && SrcVideoInfo->height==1))  ErrorText = "Analyze: Source clip too small";
@@ -1252,26 +1280,16 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     MaskFrame = avs_get_frame(MaskClip?MaskClip:SrcClip,0);
     if (!MaskFrame)  ErrorText = "Analyze: Could not get mask frame";
   }
-  /* ...and get pointers to pixel data */
+  /* ...and get pointers to pixel data (without Mask, MaskChannel is the source alpha) */
   if (!ErrorText)
   {
-    if (MaskClip && avs_is_yuv(MaskVideoInfo))
+    const uint8_t * maskPlanes[MaxChannelCount] = {};
+    int  maskPitches[MaxChannelCount] = {};
+    if (AvsGetFramePlanesRO(MaskFrame, maskFmt, maskPlanes, maskPitches))
     {
-      MaskData = avs_get_read_ptr_p(MaskFrame,AVS_PLANAR_Y);
-      MaskPitch = avs_get_pitch_p(MaskFrame,AVS_PLANAR_Y);
-      MaskSampleStep = avs_is_yuy2(MaskVideoInfo)?2:1;
-    }
-    else if (MaskClip && avs_is_planar_rgba(MaskVideoInfo))
-    {
-      MaskData = avs_get_read_ptr_p(MaskFrame,AVS_PLANAR_A);
-      MaskPitch = avs_get_pitch_p(MaskFrame,AVS_PLANAR_A);
-      MaskSampleStep = 1;
-    }
-    else
-    {
-      MaskData = avs_get_read_ptr_p(MaskFrame, AVS_DEFAULT_PLANE)+3;
-      MaskPitch = avs_get_pitch_p(MaskFrame, AVS_DEFAULT_PLANE);
-      MaskSampleStep = 4;
+      MaskData = maskPlanes[MaskChannel];
+      MaskPitch = maskPitches[MaskChannel];
+      MaskSampleStep = maskFmt.sampleStep[MaskChannel];
     }
     if (!MaskData)  ErrorText = "Analyze: Could not gather pixel data pointer";
   }
@@ -2752,12 +2770,22 @@ int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataC
 #ifdef ENABLE_AVISYNTH
 int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
                               AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,
-                              const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo)
+                              const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo,  int  AlphaChannel,
+                              bool  FlipLogo,  bool  FlipAlpha)
+/* FlipLogo/FlipAlpha: the clip is stored in the other vertical direction than the source (packed vs planar RGB) */
 {
   const FrameLayout  logoFmt = FrameLayoutFromPixelType(LogoVideoInfo->pixel_type);
   const uint8_t * logoPlanes[MaxChannelCount] = {};
   int  logoPitch[MaxChannelCount] = {};
   if (!AvsGetFramePlanesRO(LogoFrame, logoFmt, logoPlanes, logoPitch))  return  -1;
+  if (FlipLogo)
+  {
+    for (int i=0 ; i<logoFmt.channelCount ; i++)
+    {
+      logoPlanes[i] += static_cast<ptrdiff_t>(LogoVideoInfo->height/logoFmt.pixelHeight[i] - 1) * logoPitch[i];
+      logoPitch[i] *= -1;
+    }
+  }
   const uint8_t * alphaPlane = nullptr;
   int  alphaPitch = 0, alphaSampleStep = 0;
   if (AlphaFrame)
@@ -2766,12 +2794,10 @@ int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDa
     const uint8_t * alphaPlanes[MaxChannelCount] = {};
     int  alphaPlanesPitch[MaxChannelCount] = {};
     if (!AvsGetFramePlanesRO(AlphaFrame, alphaFmt, alphaPlanes, alphaPlanesPitch))  return  -1;
-    alphaPlane = alphaPlanes[0];
-    alphaPitch = alphaPlanesPitch[0];
-    alphaSampleStep = alphaFmt.sampleStep[0];
-    if (avs_is_rgb32(AlphaVideoInfo))  alphaPlane += 3;
-    /* only packed RGB is stored upside-down; flip if logo and alpha storage directions differ */
-    if ((avs_is_rgb(LogoVideoInfo) && !avs_is_planar(LogoVideoInfo)) != (avs_is_rgb(AlphaVideoInfo) && !avs_is_planar(AlphaVideoInfo)))
+    alphaPlane = alphaPlanes[AlphaChannel];
+    alphaPitch = alphaPlanesPitch[AlphaChannel];
+    alphaSampleStep = alphaFmt.sampleStep[AlphaChannel];
+    if (FlipAlpha)
     {
       alphaPlane += static_cast<ptrdiff_t>(LogoVideoInfo->height - 1) * alphaPitch;
       alphaPitch *= -1;
