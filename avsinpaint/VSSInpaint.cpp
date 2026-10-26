@@ -401,11 +401,14 @@ static void  VS_CC  vsInpaintCreate(const VSMap *  in,  VSMap *  out,  void *  /
   else if (PreBlur < 0.0)    ErrorText = "InpaintLogo: PreBlur must be non-negative";
   else if (PostBlur < 0.0)   ErrorText = "InpaintLogo: PostBlur must be non-negative";
   else if (PAR <= 0.0)       ErrorText = "InpaintLogo: PixelAspect must be positive";
+  else if (PreBlurSize < 0.0)   ErrorText = "InpaintLogo: PreBlurSize must be non-negative";
+  else if (PostBlurSize < 0.0)  ErrorText = "InpaintLogo: PostBlurSize must be non-negative";
+  else if (MaxSteps < -1)    ErrorText = "InpaintLogo: Steps must not be lower than -1";
 
   const FrameLayout srcFmt  = FrameLayoutFromVSFormat(srcVI->format);
   const FrameLayout maskFmt = maskNode ? FrameLayoutFromVSFormat(maskVI->format) : FrameLayout{};
 
-  /* As in AviSynth: ChromaWeight is ignored for RGB (each channel weighted equally) and for Gray */
+  /* As in AviSynth: ChromaWeight is ignored for RGB (fixed weights, see AVSInpaint.htm) and for Gray */
   if (!ErrorText)
   {
     int chromaChannels = srcFmt.channelCount - 1;  /* mask is always a separate clip for VS4 */
@@ -580,6 +583,10 @@ static void  VS_CC  vsAnalyzeCreate(const VSMap *  in,  VSMap *  out,  void *  /
   double DeviationWeight   = vsapi->mapGetFloat(in,       "deviationweight",    0, &err);  if (err) DeviationWeight   = 0.5;
   double SubsamplingWeight = vsapi->mapGetFloat(in,       "subsamplingweight",  0, &err);  if (err) SubsamplingWeight = 0.5;
 
+  if (!ErrorText && DeviationWeight < 0.0)
+    ErrorText = "AnalyzeLogo: DeviationWeight must not be negative";
+  if (!ErrorText && SubsamplingWeight < 0.0)
+    ErrorText = "AnalyzeLogo: SubsamplingWeight must not be negative";
   if (!ErrorText && ComputeAlpha && srcVI->numFrames < 2)
     ErrorText = "AnalyzeLogo: Source clip must have at least two frames for alpha computation";
 
