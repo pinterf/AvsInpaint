@@ -19,9 +19,9 @@
 
 /* Build a FrameLayout from a VSVideoFormat.
    VS4 has no packed formats; sampleStep is always 1.
-   RGB planes are in R,G,B order (plane 0 = R), which differs from the AVS convention
-   (plane 0 = B).  InpaintCore treats all RGB channels symmetrically so the order does
-   not affect correctness, only which channel drives the structure tensor.               */
+   VS RGB planes are in R,G,B order (plane 0 = R), the core expects the AVS channel
+   order B,G,R (channel 0 = B, which gets the "luma" weight in the structure tensor);
+   VsPlaneOf maps the channels so VS results match AviSynth.                            */
 static FrameLayout  FrameLayoutFromVSFormat(const VSVideoFormat &  fmt)
 {
   FrameLayout  L;
@@ -206,13 +206,19 @@ static const char *  SetupInpaintData(InpaintDataStruct *  InpaintData,
 
 /*****  VS4 plane pointer helpers  *****/
 
+/* VS plane index of core channel i: RGB channels are B,G,R in the core (as in AviSynth) */
+static int  VsPlaneOf(const FrameLayout &  L,  int  i)
+{
+  return  (L.colorFamily == ColorFamily::RGB && i < 3) ? 2 - i : i;
+}
+
 static bool  VsGetFramePlanesRO(const VSFrame *  Frame,  const FrameLayout &  L,  const uint8_t *  Planes[],  int  Pitch[],  const VSAPI *  vsapi)
 {
   if (!Frame || !L.channelCount)  return  false;
   for (int i = 0 ; i < L.channelCount ; i++)
   {
-    Planes[i] = vsapi->getReadPtr(Frame, i);
-    Pitch[i]  = static_cast<int>(vsapi->getStride(Frame, i));
+    Planes[i] = vsapi->getReadPtr(Frame, VsPlaneOf(L, i));
+    Pitch[i]  = static_cast<int>(vsapi->getStride(Frame, VsPlaneOf(L, i)));
     if (!Planes[i])  return  false;
   }
   return  true;
@@ -223,8 +229,8 @@ static bool  VsGetFramePlanes(VSFrame *  Frame,  const FrameLayout &  L,  uint8_
   if (!Frame || !L.channelCount)  return  false;
   for (int i = 0 ; i < L.channelCount ; i++)
   {
-    Planes[i] = vsapi->getWritePtr(Frame, i);
-    Pitch[i]  = static_cast<int>(vsapi->getStride(Frame, i));
+    Planes[i] = vsapi->getWritePtr(Frame, VsPlaneOf(L, i));
+    Pitch[i]  = static_cast<int>(vsapi->getStride(Frame, VsPlaneOf(L, i)));
     if (!Planes[i])  return  false;
   }
   return  true;
@@ -375,14 +381,16 @@ static void  VS_CC  vsInpaintCreate(const VSMap *  in,  VSMap *  out,  void *  /
     return;
   }
 
-  /* --- Read parameters --- */
-  double  Radius       = vsapi->mapGetFloat(in, "radius",        0, &err);  if (err) Radius       = 2.0;
-  double  Sharpness    = vsapi->mapGetFloat(in, "sharpness",     0, &err);  if (err) Sharpness    = 0.0;
-  double  PreBlur      = vsapi->mapGetFloat(in, "preblur",       0, &err);  if (err) PreBlur      = 1.0;
-  double  PostBlur     = vsapi->mapGetFloat(in, "postblur",      0, &err);  if (err) PostBlur     = 1.0;
-  double  ChromaWeight = vsapi->mapGetFloat(in, "chromaweight",  0, &err);  if (err) ChromaWeight = -1.0;  /* -1 = auto */
-  double  PreBlurSize  = vsapi->mapGetFloat(in, "preblursize",   0, &err);  if (err) PreBlurSize  = 1.5;
-  double  PostBlurSize = vsapi->mapGetFloat(in, "postblursize",  0, &err);  if (err) PostBlurSize = 1.5;
+  /* --- Read parameters (defaults as in the AviSynth version) --- */
+  double  Radius       = vsapi->mapGetFloat(in, "radius",        0, &err);  if (err) Radius       = 5.0;
+  double  Sharpness    = vsapi->mapGetFloat(in, "sharpness",     0, &err);  if (err) Sharpness    = 30.0;
+  double  PreBlur      = vsapi->mapGetFloat(in, "preblur",       0, &err);  if (err) PreBlur      = 0.5;
+  double  PostBlur     = vsapi->mapGetFloat(in, "postblur",      0, &err);  if (err) PostBlur     = 4.0;
+  double  ChromaWeight = vsapi->mapGetFloat(in, "chromaweight",  0, &err);  if (err) ChromaWeight = 0.0;
+  double  PreBlurSize  = vsapi->mapGetFloat(in, "preblursize",   0, &err);  if (err) PreBlurSize  = 2 * PreBlur;
+  double  PostBlurSize = vsapi->mapGetFloat(in, "postblursize",  0, &err);  if (err) PostBlurSize = 2 * PostBlur;
+  if (PreBlur == 0.0)   PreBlurSize  = 0.0;
+  if (PostBlur == 0.0)  PostBlurSize = 0.0;
   int     ChromaTensor = vsapi->mapGetIntSaturated(in, "chromatensor", 0, &err);  if (err) ChromaTensor = 0;
   double  PAR          = vsapi->mapGetFloat(in, "pixelaspect",   0, &err);  if (err) PAR          = 1.0;
   int     MaxSteps     = vsapi->mapGetIntSaturated(in, "steps",  0, &err);  if (err) MaxSteps     = -1;
@@ -397,11 +405,12 @@ static void  VS_CC  vsInpaintCreate(const VSMap *  in,  VSMap *  out,  void *  /
   const FrameLayout srcFmt  = FrameLayoutFromVSFormat(srcVI->format);
   const FrameLayout maskFmt = maskNode ? FrameLayoutFromVSFormat(maskVI->format) : FrameLayout{};
 
-  /* Compute default ChromaWeight if not specified */
-  if (!ErrorText && ChromaWeight < 0.0)
+  /* As in AviSynth: ChromaWeight is ignored for RGB (each channel weighted equally) and for Gray */
+  if (!ErrorText)
   {
     int chromaChannels = srcFmt.channelCount - 1;  /* mask is always a separate clip for VS4 */
-    ChromaWeight = (chromaChannels == 0) ? 0.0 : (srcFmt.colorFamily == ColorFamily::RGB ? 1.0 - 1.0 / chromaChannels : 0.0);
+    if (chromaChannels == 0)  ChromaWeight = 0.0;
+    else if (srcFmt.colorFamily == ColorFamily::RGB)  ChromaWeight = 1.0 - 1.0 / chromaChannels;
   }
   if (!ErrorText && (ChromaWeight < 0.0 || ChromaWeight > 1.0))
     ErrorText = "InpaintLogo: ChromaWeight must be in [0.0, 1.0]";
@@ -429,7 +438,7 @@ static void  VS_CC  vsInpaintCreate(const VSMap *  in,  VSMap *  out,  void *  /
 
   ErrorText = SetupInpaintData(&d->inpaint, srcFmt,
     srcVI->width, srcVI->height,
-    /*hasMaskClip=*/true, maskFmt, /*maskChannelNo=*/0, /*flipMask=*/false,
+    /*hasMaskClip=*/true, maskFmt, /*maskChannelNo (VS plane 0)=*/VsPlaneOf(maskFmt, 0), /*flipMask=*/false,
     d->maskFrameCount, Radius, Sharpness, PreBlur, PostBlur, ChromaWeight,
     PreBlurSize, PostBlurSize, ChromaTensor != 0, PAR, MaxSteps);
 
@@ -566,10 +575,10 @@ static void  VS_CC  vsAnalyzeCreate(const VSMap *  in,  VSMap *  out,  void *  /
   else if (maskVI->width != srcVI->width || maskVI->height != srcVI->height)
     ErrorText = "AnalyzeLogo: Source and mask clips have different dimensions";
 
-  /* --- Parameters --- */
-  int    ComputeAlpha      = vsapi->mapGetIntSaturated(in, "computealpha",      0, &err);  if (err) ComputeAlpha      = 0;
-  double DeviationWeight   = vsapi->mapGetFloat(in,       "deviationweight",    0, &err);  if (err) DeviationWeight   = 0.0;
-  double SubsamplingWeight = vsapi->mapGetFloat(in,       "subsamplingweight",  0, &err);  if (err) SubsamplingWeight = 0.0;
+  /* --- Parameters (defaults as in the AviSynth version) --- */
+  int    ComputeAlpha      = vsapi->mapGetIntSaturated(in, "computealpha",      0, &err);  if (err) ComputeAlpha      = 1;
+  double DeviationWeight   = vsapi->mapGetFloat(in,       "deviationweight",    0, &err);  if (err) DeviationWeight   = 0.5;
+  double SubsamplingWeight = vsapi->mapGetFloat(in,       "subsamplingweight",  0, &err);  if (err) SubsamplingWeight = 0.5;
 
   if (!ErrorText && ComputeAlpha && srcVI->numFrames < 2)
     ErrorText = "AnalyzeLogo: Source clip must have at least two frames for alpha computation";
