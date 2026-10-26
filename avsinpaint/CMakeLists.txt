@@ -39,6 +39,11 @@ if(MSVC)
   if(ENABLE_AVISYNTH AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     list(APPEND AvsInPaint_Sources AvsInPaint.def)
   endif()
+endif()
+if(WIN32)
+  # Version resource: MSVC compiles it with the IDE, MinGW/llvm-mingw with windres/llvm-rc
+  # (enable_language(RC): the project itself is CXX only)
+  enable_language(RC)
   list(APPEND AvsInPaint_Sources AvsInPaint.rc)
 endif()
 
