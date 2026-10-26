@@ -156,7 +156,7 @@ static int  AvsGetChromaLocation(AVS_ScriptEnvironment *  Env,  AVS_Clip *  Clip
 
 /** Own functions **/
 /* Common functions */
-bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight);
+bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  float  StopValue = FMMFarMarker);
 bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<int> &  HeapVec);
 /* Inpaint tools */
 InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData);
@@ -1824,7 +1824,9 @@ bool  AvsGetFramePlanesRO(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  con
 
 
 
-bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight)
+bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  float  StopValue)
+/* Values become alive in nondecreasing order, so stopping when the smallest close value reaches StopValue
+   leaves every alive value exact, and every remaining (close or far) value >= StopValue */
 {
   int  k, x, y, h;
   bool  Error;
@@ -1860,6 +1862,7 @@ bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height
   {
     /** Make lowest value alive **/
     k = Heap.Heap[1];
+    if (u[k]>=StopValue)  break;
     if (Order)  *(Order++) = k;
     Close[k] = 0;  /* Lowest close value becomes alive */
     /* We transport the void value in Heap[1] down to the bottom of the heap */
@@ -2041,7 +2044,8 @@ static InpaintMaskResult  InpaintPrepareMaskImpl(InpaintMaskDataStruct **  MaskD
   PixelHeight = std::max<double>(PixelHeight,1.5+InpaintData->LumaPreBlurYKernelSize+std::max<double>(InpaintData->Luma4LumaPostBlurYKernelSize,InpaintData->Luma4ChromaPostBlurYKernelSize));
   PixelHeight += InpaintData->ChromaPixelHeight;
   PixelHeight = std::max<double>(PixelHeight,2.0);
-  if (!FastMarching(DistFcn,nullptr,Width,Height,1.0/PixelWidth,1.0/PixelHeight))
+  /* Only the halo (u<1.1) is needed; 1.5 is a safety margin over float rounding of the FMM updates */
+  if (!FastMarching(DistFcn,nullptr,Width,Height,1.0/PixelWidth,1.0/PixelHeight,(float)1.5))
   {
     delete MaskData;
     return  InpaintMaskResult::MemoryError;
