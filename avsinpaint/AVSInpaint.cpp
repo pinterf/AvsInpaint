@@ -3241,6 +3241,64 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
     if (AlphaWeightSum>0.0)
     {
       for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)  AlphaWeight[ChannelNo] /= AlphaWeightSum;
+      /* Transparency estimate of one channel sample (k: index in the channel's own resolution) */
+      auto  ChannelTransparency = [&](int  Ch,  int  kk) -> double
+      {
+        double  v = static_cast<double>(Sum2[Ch][kk])-static_cast<double>(Sum1[Ch][kk])*static_cast<double>(Sum1[Ch][kk])/FrameCount;
+        if (!(v>0.0))  v = 0.0;
+        v = std::sqrt(v/(FrameCount-1)/ChannelNMVariance[Ch]);
+        if (!(v>0.0))  v = 0.0;
+        if (v>1.0)  v = 1.0;
+        return  v;
+      };
+      bool  HasSubsampled = false;
+      double  FullWeightSum = 0.0;
+      for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
+      {
+        if (srcFmt.pixelWidth[ChannelNo]*srcFmt.pixelHeight[ChannelNo]>1)  HasSubsampled = true;
+        else  FullWeightSum += AlphaWeight[ChannelNo];
+      }
+      if (HasSubsampled && FullWeightSum>0.0)
+      {
+        /* A subsampled channel only knows the transparency of a whole block of luma pixels. Using that value
+           for each pixel of the block turns sharp alpha edges into blocks. Instead the full resolution estimate
+           is kept for the detail and the subsampled channel corrects its block mean:
+             T(x) = Tfull(x) + Tsub(block) - Downsample(Tfull)(block)                                        */
+        std::vector<float>  TFull(static_cast<size_t>(Width)*Height), TFullDown;
+        for (k=0 ; k<Width*Height ; k++)
+        {
+          double  s = 0.0;
+          for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
+            if (srcFmt.pixelWidth[ChannelNo]*srcFmt.pixelHeight[ChannelNo]==1)  s += AlphaWeight[ChannelNo]*ChannelTransparency(ChannelNo,k);
+          TFull[k] = static_cast<float>(s/FullWeightSum);
+        }
+        std::vector<double>  AlphaSumVec(static_cast<size_t>(Width)*Height);
+        for (k=0 ; k<Width*Height ; k++)  AlphaSumVec[k] = FullWeightSum*TFull[k];
+        for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
+        {
+          const int  PW = srcFmt.pixelWidth[ChannelNo], PH = srcFmt.pixelHeight[ChannelNo];
+          if (PW*PH==1)  continue;
+          const int  ChWidth = Width/PW;
+          TFullDown.resize(static_cast<size_t>(ChWidth)*(Height/PH));
+          DownsampleAlpha(TFullDown.data(), TFull.data(), Width, Height, PW, PH, ChromaLoc, ChannelNo);
+          for (y=0 ; y<Height ; y++)
+            for (x=0 ; x<Width ; x++)
+            {
+              const int  kc = ChWidth*(y/PH)+(x/PW);
+              double  v = TFull[Width*y+x] + ChannelTransparency(ChannelNo,kc) - TFullDown[kc];
+              v = std::min(std::max(v, 0.0), 1.0);
+              AlphaSumVec[Width*y+x] += AlphaWeight[ChannelNo]*v;
+            }
+        }
+        for (k=0 ; k<Width*Height ; k++)
+        {
+          AlphaSum = AlphaSumVec[k];
+          if (AlphaSum>1.0)  AlphaSum = 1.0;
+          if (!(AlphaSum<2.0))  AlphaSum = 1.0;
+          AlphaChannel[k] = static_cast<float>(1.0-AlphaSum);  /* = Opacity */
+        }
+      }
+      else
       for (y=0 ; y<Height ; y++)
       {
         for(x=0 ; x<Width ; x++)
