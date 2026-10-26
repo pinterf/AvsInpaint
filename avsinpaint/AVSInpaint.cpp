@@ -80,10 +80,16 @@ typedef  uint32_t  Analyze_Sum2Type;
 
 
 /* Heap used by fast marching method */
+/* The key (u value) is stored next to the index: heap comparisons then do not read u[] at random positions */
+struct FMMHeapNode
+{
+  float  Key;
+  int  Index;
+};
 struct FMMHeapStruct
 {
   int  Size, MaxSize, Delta;
-  int * MemPointer, * Heap;
+  FMMHeapNode * MemPointer, * Heap;
 };
 
 
@@ -157,7 +163,7 @@ static int  AvsGetChromaLocation(AVS_ScriptEnvironment *  Env,  AVS_Clip *  Clip
 /** Own functions **/
 /* Common functions */
 bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  float  StopValue = FMMFarMarker);
-bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<int> &  HeapVec);
+bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<FMMHeapNode> &  HeapVec);
 /* Inpaint tools */
 InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData);
 void  AddPreBlurValue(float  G[],  int  x,  int  y,  int  Width,  int  Height,  int  Value,  double  BlurXKernel[],  int  BlurXKernelSize,  double  BlurYKernel[],  int  BlurYKernelYize);
@@ -1839,7 +1845,7 @@ bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height
   /* Initialize heap struct */
   Heap.Delta = FMMHeapDelta;
   Heap.MaxSize = 4*(Width+Height+FMMHeapDelta);  /* Enough memory for slightly unregular domains */
-  std::vector<int> HeapVec(Heap.MaxSize);
+  std::vector<FMMHeapNode> HeapVec(Heap.MaxSize);
   Heap.MemPointer = HeapVec.data();
   Heap.Size = 0;
   Heap.Heap = Heap.MemPointer-1;  /* 1-indexed heap: Heap[1] is root (= MemPointer[0]); Heap[0] is never accessed */
@@ -1861,8 +1867,8 @@ bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height
   while (!Error && Heap.Size)
   {
     /** Make lowest value alive **/
-    k = Heap.Heap[1];
-    if (u[k]>=StopValue)  break;
+    k = Heap.Heap[1].Index;
+    if (Heap.Heap[1].Key>=StopValue)  break;
     if (Order)  *(Order++) = k;
     Close[k] = 0;  /* Lowest close value becomes alive */
     /* We transport the void value in Heap[1] down to the bottom of the heap */
@@ -1870,22 +1876,22 @@ bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height
     while (2*h<=Heap.Size)
     {
       h *= 2;
-      h += (h<Heap.Size)&&(u[Heap.Heap[h+1]]<u[Heap.Heap[h]]);
+      h += (h<Heap.Size)&&(Heap.Heap[h+1].Key<Heap.Heap[h].Key);
       Heap.Heap[h/2] = Heap.Heap[h];
-      Close[Heap.Heap[h]] = h/2;
+      Close[Heap.Heap[h].Index] = h/2;
     }
     /* The void value is now at position h in the heap - depending on the new value (Heap[HeapSize]), we transport it up again */
-    while ((h>1) && (u[Heap.Heap[Heap.Size]]<u[Heap.Heap[h/2]]))
+    while ((h>1) && (Heap.Heap[Heap.Size].Key<Heap.Heap[h/2].Key))
     {
       Heap.Heap[h] = Heap.Heap[h/2];
-      Close[Heap.Heap[h]] = h;
+      Close[Heap.Heap[h].Index] = h;
       h /= 2;
     }
     /* Now h denotes the new position of Heap[HeapSize] */
     if (h!=Heap.Size)
     {
       Heap.Heap[h] = Heap.Heap[Heap.Size];
-      Close[Heap.Heap[h]] = h;
+      Close[Heap.Heap[h].Index] = h;
     }
     Heap.Size--;
     /** Make points around the new alive point close **/
@@ -1901,7 +1907,7 @@ bool  FastMarching(float  u[],  unsigned int *  Order,  int  Width,  int  Height
 
 
 
-bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<int> &  HeapVec)
+bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Width,  int  Height,  double  PixelWidth,  double  PixelHeight,  FMMHeapStruct *  Heap,  std::vector<FMMHeapNode> &  HeapVec)
 {
   int  k, h;  /* k = Position in matrix,   h = position in heap */
   int  xm, xp, ym, yp;
@@ -1955,14 +1961,16 @@ bool  FMMUpdateCloseValue(float  u[],  int  Close[],  int  x,  int  y,  int  Wid
     h = Heap->Size;
   }
   /* Push upwards in the heap until heap structure is restored */
-  while ((h>1) && (u[k]<u[Heap->Heap[h/2]]))
+  const float  Key = u[k];
+  while ((h>1) && (Key<Heap->Heap[h/2].Key))
   {
     Heap->Heap[h] = Heap->Heap[h/2];
-    Close[Heap->Heap[h]] = h;
+    Close[Heap->Heap[h].Index] = h;
     h /= 2;
   }
   /* Update new heap- and close-pointer */
-  Heap->Heap[h] = k;
+  Heap->Heap[h].Key = Key;
+  Heap->Heap[h].Index = k;
   Close[k] = h;
   return  true;
 }
