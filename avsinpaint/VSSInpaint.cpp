@@ -452,6 +452,8 @@ static void  VS_CC  vsInpaintCreate(const VSMap *  in,  VSMap *  out,  void *  /
       {
         switch (InpaintPrepareMask(&d->inpaint.StaticMaskData, maskFmt, maskPlanes, maskPitch, &d->inpaint))
         {
+          case InpaintMaskResult::OK:
+            break;
           case InpaintMaskResult::FullMask:
 #if ((InpaintFullMaskError) >= 1)
             ErrorText = "InpaintLogo: Mask is full";
@@ -518,9 +520,15 @@ struct VSAnalyzeData
 
 static const VSFrame *  VS_CC  vsAnalyzeGetFrame(int  /*n*/,  int  activationReason,  void *  instanceData,  void **  /*frameData*/,  VSFrameContext *  frameCtx,  VSCore *  core,  const VSAPI *  vsapi)
 {
-  if (activationReason != arAllFramesReady)  return  nullptr;
   VSAnalyzeData * d = static_cast<VSAnalyzeData*>(instanceData);
-  return  vsapi->copyFrame(d->resultFrame, core);
+  /* The analysis result is precomputed in vsAnalyzeCreate and this filter has no
+     upstream node to request frames from, so the result can be returned right
+     away. Returning nullptr on the initial request (and never re-requesting our
+     own frame) would leave the filter without a frame: "No frame returned at the
+     end of processing by AnalyzeLogo". */
+  if (activationReason == arInitial || activationReason == arAllFramesReady)
+    return  vsapi->copyFrame(d->resultFrame, core);
+  return  nullptr;
 }
 
 
@@ -626,7 +634,7 @@ static void  VS_CC  vsAnalyzeCreate(const VSMap *  in,  VSMap *  out,  void *  /
   /* --- Allocate result frame --- */
   const FrameLayout srcFmt = FrameLayoutFromVSFormat(srcVI->format);
   VSVideoInfo dstVI = *srcVI;
-  if (ComputeAlpha)  dstVI.height *= 2;  /* lower half = alpha channel */
+  dstVI.height *= 2;  /* lower half = alpha channel (the mask is always a separate clip, as with AviSynth's Mask argument) */
 
   VSFrame * dstFrame = vsapi->newVideoFrame(&srcVI->format, dstVI.width, dstVI.height, nullptr, core);
   if (!dstFrame)
@@ -654,7 +662,7 @@ static void  VS_CC  vsAnalyzeCreate(const VSMap *  in,  VSMap *  out,  void *  /
   int32_t AnalyzeResult = Analyze(srcFmt, Width, Height,
     static_cast<unsigned int>(srcVI->numFrames),
     fetchSrcFrame, releaseSrcFrame,
-    destPlanes, destPitch, ComputeAlpha != 0,
+    destPlanes, destPitch, true,
     Mask, MaskSize, ComputeAlpha, DeviationWeight, SubsamplingWeight);
 
   vsapi->freeNode(srcNode);
