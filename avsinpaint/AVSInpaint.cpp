@@ -1564,10 +1564,9 @@ static const char *  DistanceFunctionCoreImpl(uint8_t *  data,  int  pitch,  int
     const int distRow = y*width;
     for (x=0 ; x<width ; x++)
     {
-      const float v = DistFcn[distRow+x];
-      int iv = static_cast<int>(v + 0.5f);
-      iv = std::min(255, std::max(0, iv));
-      *DataPtr = static_cast<uint8_t>(iv);
+      /* Clamp before rounding: a large scale would overflow the int conversion */
+      const float v = std::min(std::max(DistFcn[distRow+x], 0.0f), 255.0f);
+      *DataPtr = static_cast<uint8_t>(static_cast<int>(v + 0.5f));
       DataPtr += stride;
     }
     DataPtr += pitch-width*stride;
@@ -3482,10 +3481,9 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
           iPixelValue = 0x80;
         }
         else {
-          // safe to round and clamp now
+          // shift to the 0x80 center and clamp before rounding, so negative values round correctly
+          PixelValue = std::min(std::max(PixelValue + 0x80, 0.0), 255.0);
           iPixelValue = static_cast<int>(PixelValue + 0.5);
-          iPixelValue += 0x80; // chroma center
-          iPixelValue = std::min(std::max(iPixelValue, 0x00), 0xFF);
         }
         DestPtr[destPitch[ChannelNo]*y+x*srcFmt.sampleStep[ChannelNo]] = static_cast<uint8_t>(iPixelValue);
       }
