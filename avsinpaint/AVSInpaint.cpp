@@ -2052,7 +2052,15 @@ static InpaintMaskResult  InpaintPrepareMaskImpl(InpaintMaskDataStruct **  MaskD
   PixelHeight = std::max<double>(PixelHeight,1.5+InpaintData->LumaPreBlurYKernelSize+std::max<double>(InpaintData->Luma4LumaPostBlurYKernelSize,InpaintData->Luma4ChromaPostBlurYKernelSize));
   PixelHeight += InpaintData->ChromaPixelHeight;
   PixelHeight = std::max<double>(PixelHeight,2.0);
-  /* Only the halo (u<1.1) is needed; 1.5 is a safety margin over float rounding of the FMM updates */
+  /* Only the halo (u<1.1) is needed, so FastMarching may stop early. Why StopValue=1.5 is safe and loses no halo pixel:
+     - Pixels that became alive keep their exact values, the same as in a full run.
+     - When it stops, every close pixel has a heap key >= 1.5, and every far pixel is still FMMFarMarker.
+       Both fail the u<1.1 test below, which is also what a full run would give them:
+       FastMarching makes values alive in nondecreasing order, so their final values would also be >= 1.5.
+     - That order is exact in real arithmetic. FMMUpdateCloseValue computes in double but stores floats,
+       so in practice a later value may come out a few float ulps (~1e-7) below an earlier one.
+       The 1.5-1.1 = 0.4 gap is millions of ulps, far more than such rounding can ever eat up.
+     - The only cost of the margin is the extra ring of pixels between 1.1 and 1.5; the result is bit-identical. */
   if (!FastMarching(DistFcn,nullptr,Width,Height,1.0/PixelWidth,1.0/PixelHeight,(float)1.5))
   {
     delete MaskData;
