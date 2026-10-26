@@ -11,31 +11,42 @@ project(${ProjectName} LANGUAGES CXX)
 
 option(ENABLE_AVISYNTH "Build AviSynth interface (requires bundled avisynth/ headers)" ON)
 
+# AVSInpaint.cpp holds both the AviSynth wrapper and the API-agnostic core
+# (shared with the VapourSynth wrapper); the AviSynth-specific parts are
+# compiled out when ENABLE_AVISYNTH is off, so the file is always built.
 set(AvsInPaint_Sources
   VSSInpaint.cpp
+  AVSInpaint.cpp
+  AvsLoader.cpp
 )
 
 if(ENABLE_AVISYNTH)
-  list(APPEND AvsInPaint_Sources
-    AVSInpaint.cpp
-    AvsLoader.cpp
-  )
+  # ENABLE_AVISYNTH selects the AviSynth wrapper code in AVSInpaint.cpp / AvsLoader.cpp
+  # (must be set after add_library, below)
 endif()
 
 # MSVC: include the module-definition file (export name aliases) and version resource.
 # DEF is only needed for AviSynth — it aliases the Win32 stdcall-decorated entry points.
 # VapourSynthPluginInit2 is __cdecl and needs no alias.
+# The DEF is only usable for 32-bit (Win32) builds: on x64 there is no stdcall
+# decoration, so the internal symbol is _avisynth_c_plugin_init without "@4" and
+# the DEF's "_avisynth_c_plugin_init@4" would not resolve (LNK2001).
+# On x64 the dllexport attributes of the entry points provide the exports.
 # MinGW: the DEF is NOT used — --enable-stdcall-fixup (set in root CMakeLists) handles
 # stdcall decoration stripping automatically, and the DEF's _avisynth_c_plugin_init@4
 # internal symbol doesn't exist in 64-bit MinGW builds.
 if(MSVC)
-  if(ENABLE_AVISYNTH)
+  if(ENABLE_AVISYNTH AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     list(APPEND AvsInPaint_Sources AvsInPaint.def)
   endif()
   list(APPEND AvsInPaint_Sources AvsInPaint.rc)
 endif()
 
 add_library(${PluginName} SHARED ${AvsInPaint_Sources})
+
+if(ENABLE_AVISYNTH)
+  target_compile_definitions(${PluginName} PRIVATE ENABLE_AVISYNTH)
+endif()
 
 set_target_properties(${PluginName} PROPERTIES "OUTPUT_NAME" "${PluginName}")
 if(MINGW)
