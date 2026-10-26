@@ -56,6 +56,20 @@ enum class InpaintMaskResult : int
 enum class ColorFamily { Gray, YUV, RGB };
 
 
+/* Chroma sample siting of subsampled YUV: the values of the _ChromaLocation frame property
+   (ITU-T H.273, same in AviSynth+ and VapourSynth), plus the AviSynth "DV" special case
+   (V co-sited top-left, U bottom-left). */
+enum ChromaLocation
+{
+  ChromaLoc_Auto = -1,  /* not given: take _ChromaLocation of the source, or ChromaLoc_Default */
+  ChromaLoc_Left = 0, ChromaLoc_Center = 1, ChromaLoc_TopLeft = 2, ChromaLoc_Top = 3,
+  ChromaLoc_BottomLeft = 4, ChromaLoc_Bottom = 5,
+  ChromaLoc_DV = 6,
+  ChromaLoc_Invalid = -2
+};
+const int  ChromaLoc_Default = ChromaLoc_Left;  /* MPEG-2, the default of 4:2:0 and 4:2:2 (same as AviSynth+ and VapourSynth resizers) */
+
+
 /*****  Structs  *****/
 
 /* Physical layout of a video frame: all information derivable from pixel format alone, independent of any API */
@@ -163,7 +177,18 @@ double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  d
 /* Deblend tools — no API types; all frame data via plain pointers */
 
 void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height);
-void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  Stride,  int  LogoPitch,  int  LogoStride,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo);
+
+/* Chroma placement name (case-insensitive) -> ChromaLocation. nullptr or "auto" gives ChromaLoc_Auto,
+   unknown names ChromaLoc_Invalid. Names as in AviSynth+ ChromaInPlacement and VapourSynth chromaloc_s. */
+int  ParseChromaPlacement(const char *  Name);
+/* Resolves ChromaLoc_Auto: FrameProp is the _ChromaLocation frame property (-1 if absent) */
+int  ResolveChromaLocation(int  ChromaLoc,  int  FrameProp);
+/* Downsamples a full-resolution alpha (or mask) plane to the resolution of channel ChannelNo, which is
+   subsampled by PixelWidth x PixelHeight. Each chroma sample takes the luma samples around its sited
+   position: a box over the block where it is centered, a triangle ([1,2,1]/4 for factor 2) where it is
+   co-sited with a luma sample. ChromaLoc_Center is the plain block average. */
+void  DownsampleAlpha(float  Dest[],  const float  Src[],  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo);
 /* LogoData[i] = alpha * logo_pixel, premultiplied, uint16_t (range [0..255*255=65025], fits exactly).
    AlphaData[i] = 255 - alpha (the effective denominator in the deblend formula).
    Hot-loop formula: source = (255*blended - Logo) / (255-alpha), computed in double. */
@@ -175,7 +200,8 @@ void  DeblendStatic(uint8_t  Data[],  const  uint16_t  LogoData[],  const  uint8
 int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
                            const FrameLayout &  logoFmt,  int  Width,  int  Height,
                            const uint8_t *  logoPlanes[],  int  logoPitch[],
-                           const uint8_t *  alphaPlane,  int  alphaPitch,  int  alphaSampleStep);
+                           const uint8_t *  alphaPlane,  int  alphaPitch,  int  alphaSampleStep,
+                           int  ChromaLoc);
 
 /* Core algorithm — no API types; all frame data via plain pointers */
 InpaintMaskResult  InpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  const FrameLayout &  maskLayout,  const uint8_t *  planes[],  int  pitch[],  const InpaintDataStruct *  InpaintData);
@@ -190,4 +216,4 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
                  std::function<void(unsigned int)>                           releaseSrcFrame,
                  uint8_t *  destPlanes[],  int  destPitch[],  bool  destHasAlphaRow,
                  unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,
-                 double  DeviationWeight,  double  SubsamplingWeight);
+                 double  DeviationWeight,  double  SubsamplingWeight,  int  ChromaLoc);

@@ -101,12 +101,13 @@ struct DeblendDataStruct
   int  LogoPixelType, AlphaPixelType, LogoFrameCount, AlphaFrameCount, AlphaSampleStep, AlphaChannelNo;
   FrameLayout  logoLayout;
   bool  FlipLogo, FlipAlpha;  /* storage direction differs from the source (packed RGB is bottom-up) */
+  int  ChromaLoc;  /* siting of subsampled chroma (ChromaLocation) */
   /* Is static? Check (LogoClip)     Separate alpha clip? Check (AlphaClip) */
   DeblendDataStruct() :
     PixelType(0), Width(0), Height(0), layout(),
     LogoClip(nullptr), AlphaClip(nullptr),
     LogoPixelType(0), AlphaPixelType(0), LogoFrameCount(0), AlphaFrameCount(0), AlphaSampleStep(0), AlphaChannelNo(0), logoLayout(),
-    FlipLogo(false), FlipAlpha(false)
+    FlipLogo(false), FlipAlpha(false), ChromaLoc(ChromaLoc_Default)
   {}
 };
 #endif  // ENABLE_AVISYNTH
@@ -149,7 +150,8 @@ FrameLayout  FrameLayoutFromPixelType(int  PixelType);
 bool  AvsGetFramePlanes(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  uint8_t **  Planes,  int *  Pitch);
 bool  AvsGetFramePlanesRO(AVS_VideoFrame *  Frame,  const FrameLayout &  L,  const uint8_t **  Planes,  int *  Pitch);
 static InpaintMaskResult  AvsInpaintPrepareMask(InpaintMaskDataStruct **  MaskDataPtr,  AVS_VideoFrame *  Frame,  const InpaintDataStruct *  InpaintData);
-int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const AVS_VideoInfo *  LogoVideoInfo,  const AVS_VideoInfo *  AlphaVideoInfo,  int  AlphaChannel,  bool  FlipLogo,  bool  FlipAlpha);
+int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],  AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,  const AVS_VideoInfo *  LogoVideoInfo,  const AVS_VideoInfo *  AlphaVideoInfo,  int  AlphaChannel,  bool  FlipLogo,  bool  FlipAlpha,  int  ChromaLoc);
+static int  AvsGetChromaLocation(AVS_ScriptEnvironment *  Env,  AVS_Clip *  Clip,  const AVS_Value &  Arg,  const char *  FilterName,  const char **  ErrorText);
 #endif  // ENABLE_AVISYNTH
 
 /** Own functions **/
@@ -174,14 +176,14 @@ bool  GetChannelTensor(double *  TensorXX,  double *  TensorXY,  double *  Tenso
 double *  CreateGaussKernel(double  Kernel[],  int  Size,  double  Deviation,  double  Center);
 /* Deblend tools */
 void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height);
-void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight);
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo);
 /* Analyze tools */
 int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsigned int  FrameCount,
                  std::function<bool(unsigned int, const uint8_t*[], int[])>  fetchSrcFrame,
                  std::function<void(unsigned int)>                           releaseSrcFrame,
                  uint8_t *  destPlanes[],  int  destPitch[],  bool  destHasAlphaRow,
                  unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,
-                 double  DeviationWeight,  double  SubsamplingWeight);
+                 double  DeviationWeight,  double  SubsamplingWeight,  int  ChromaLoc);
 
 
 
@@ -208,8 +210,8 @@ AVSC_EXPORT  const char *  AVSC_CC  avisynth_c_plugin_init(AVS_ScriptEnvironment
 {
   if (!avs_loader_init())  return  "AvsInPaint: failed to load AviSynth library";
   avs_add_function(Env,"InpaintLogo","c[Mask]c[Radius]f[Sharpness]f[PreBlur]f[PostBlur]f[ChromaWeight]f[PreBlurSize]f[PostBlurSize]f[ChromaTensor]b[PixelAspect]f[Steps]i",Inpaint_Create,nullptr);
-  avs_add_function(Env,"DeblendLogo","cc[Alpha]c",Deblend_Create,nullptr);
-  avs_add_function(Env,"AnalyzeLogo","c[Mask]c[ComputeAlpha]b[DeviationWeight]f[SubsamplingWeight]f",Analyze_Create,nullptr);
+  avs_add_function(Env,"DeblendLogo","cc[Alpha]c[ChromaPlacement]s",Deblend_Create,nullptr);
+  avs_add_function(Env,"AnalyzeLogo","c[Mask]c[ComputeAlpha]b[DeviationWeight]f[SubsamplingWeight]f[ChromaPlacement]s",Analyze_Create,nullptr);
   avs_add_function(Env,"DistanceFunction","c[Scale]f[PixelAspect]f",DistanceFunction_Create,nullptr);
   return  "Logo Inpainting Filter";
 }
@@ -947,6 +949,8 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       DeblendData->FlipLogo = AvsIsBottomUp(LogoVideoInfo) != AvsIsBottomUp(SrcVideoInfo);
       DeblendData->FlipAlpha = AlphaVideoInfo ? (AvsIsBottomUp(AlphaVideoInfo) != AvsIsBottomUp(SrcVideoInfo)) : false;
       DeblendData->layout = FrameLayoutFromPixelType(SrcVideoInfo->pixel_type);
+      DeblendData->ChromaLoc = AvsGetChromaLocation(Env, SrcClip, avs_array_elt(Args,3),
+        "Deblend: ChromaPlacement must be \"auto\", \"left\" (\"MPEG2\"), \"center\" (\"MPEG1\", \"jpeg\"), \"top_left\", \"top\", \"bottom_left\", \"bottom\" or \"DV\"", &ErrorText);
     }
     else  ErrorText = "Deblend: Could not allocate memory";
   }
@@ -980,7 +984,11 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
           DeblendData->StaticLogoDataChannels[ChannelNo].resize(LogoVideoInfo->width*LogoVideoInfo->height/LogoPixelWidth[ChannelNo]/LogoPixelHeight[ChannelNo]);
         DeblendData->StaticAlphaDataChannels[0].resize(LogoVideoInfo->width*LogoVideoInfo->height);
         if (avs_is_yuy2(SrcVideoInfo) || avs_is_yv12(SrcVideoInfo) || avs_is_yv16(SrcVideoInfo) || avs_is_yv24(SrcVideoInfo) || avs_is_y8(SrcVideoInfo))
+        {
           DeblendData->StaticAlphaDataChannels[1].resize(LogoVideoInfo->width*LogoVideoInfo->height);
+          /* DV siting: V has its own downsampled alpha */
+          if (DeblendData->ChromaLoc == ChromaLoc_DV)  DeblendData->StaticAlphaDataChannels[2].resize(LogoVideoInfo->width*LogoVideoInfo->height);
+        }
       }
       catch (std::bad_alloc&)  { ErrorText = "Deblend: Could not allocate memory"; }
     }
@@ -994,7 +1002,7 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
         logoPtrs[ChannelNo] = DeblendData->StaticLogoDataChannels[ChannelNo].empty() ? nullptr : DeblendData->StaticLogoDataChannels[ChannelNo].data();
         alphaPtrs[ChannelNo] = DeblendData->StaticAlphaDataChannels[ChannelNo].empty() ? nullptr : DeblendData->StaticAlphaDataChannels[ChannelNo].data();
       }
-      if (0>AvsDeblendStaticPrepare(logoPtrs,alphaPtrs,LogoFrame,AlphaFrame,LogoVideoInfo,AlphaVideoInfo,AlphaChannel,DeblendData->FlipLogo,DeblendData->FlipAlpha))  ErrorText = "Deblend: Could not gather frame data pointers";
+      if (0>AvsDeblendStaticPrepare(logoPtrs,alphaPtrs,LogoFrame,AlphaFrame,LogoVideoInfo,AlphaVideoInfo,AlphaChannel,DeblendData->FlipLogo,DeblendData->FlipAlpha,DeblendData->ChromaLoc))  ErrorText = "Deblend: Could not gather frame data pointers";
     }
     if (AlphaFrame)  avs_release_video_frame(AlphaFrame);
     if (LogoFrame)  avs_release_video_frame(LogoFrame);
@@ -1179,7 +1187,7 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
     if (FramePixelWidth[ChannelNo]*FramePixelHeight[ChannelNo]==1)  DeblendDynamic(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameSampleStep[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height);
-    else  DeblendDynamicSubsampled(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameSampleStep[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height,FramePixelWidth[ChannelNo],FramePixelHeight[ChannelNo]);
+    else  DeblendDynamicSubsampled(FrameData[ChannelNo],LogoFrameData[ChannelNo],AlphaData,FramePitch[ChannelNo],FrameSampleStep[ChannelNo],LogoFramePitch[ChannelNo],LogoFrameSampleStep[ChannelNo],AlphaPitch,AlphaSampleStep,Width,Height,FramePixelWidth[ChannelNo],FramePixelHeight[ChannelNo],DeblendData->ChromaLoc,ChannelNo);
   }
   if (AlphaFrame)  avs_release_video_frame(AlphaFrame);
   if (LogoFrame)  avs_release_video_frame(LogoFrame);
@@ -1352,6 +1360,9 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
     if (!DestFrame)  ErrorText = "Analyze: Target frame could not be created";
   }
   /* MAIN PART: Calls core function (analyze), which evaluates all source clip frames and determines logo frame */
+  int  ChromaLoc = ChromaLoc_Default;
+  if (!ErrorText)  ChromaLoc = AvsGetChromaLocation(Env, SrcClip, avs_array_elt(Args,5),
+    "Analyze: ChromaPlacement must be \"auto\", \"left\" (\"MPEG2\"), \"center\" (\"MPEG1\", \"jpeg\"), \"top_left\", \"top\", \"bottom_left\", \"bottom\" or \"DV\"", &ErrorText);
   if (!ErrorText)
   {
     const FrameLayout  srcFmt = FrameLayoutFromPixelType(SrcVideoInfo->pixel_type);
@@ -1382,7 +1393,7 @@ AVS_Value  AVSC_CC  Analyze_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
                                static_cast<unsigned int>(SrcVideoInfo->num_frames),
                                fetchSrcFrame, releaseSrcFrame,
                                destPlanes, destPitch, destHasAlphaRow,
-                               Mask, MaskSize, ComputeAlpha, DeviationWeight, SubsamplingWeight);
+                               Mask, MaskSize, ComputeAlpha, DeviationWeight, SubsamplingWeight, ChromaLoc);
       if (AnalyzeResult==Analyze_Result_SrcClipError)  ErrorText = "Analyze: Problem while passing source clip";
       if (AnalyzeResult==Analyze_Result_MemoryError)   ErrorText = "Analyze: Could not allocate memory";
       if (AnalyzeResult==Analyze_Result_GeneralError)  ErrorText = "Analyze: A totally strange error occured while passing the source clip";
@@ -2623,37 +2634,134 @@ void  DeblendDynamic(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8
 
 
 
-void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight)
+int  ParseChromaPlacement(const char *  Name)
+{
+  if (!Name || !*Name)  return  ChromaLoc_Auto;
+  std::string  s(Name);
+  for (auto& c : s)  c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (s == "auto")  return  ChromaLoc_Auto;
+  if (s == "left" || s == "mpeg2")  return  ChromaLoc_Left;
+  if (s == "center" || s == "mpeg1" || s == "jpeg")  return  ChromaLoc_Center;
+  if (s == "top_left")  return  ChromaLoc_TopLeft;
+  if (s == "top")  return  ChromaLoc_Top;
+  if (s == "bottom_left")  return  ChromaLoc_BottomLeft;
+  if (s == "bottom")  return  ChromaLoc_Bottom;
+  if (s == "dv")  return  ChromaLoc_DV;
+  return  ChromaLoc_Invalid;
+}
+
+
+
+int  ResolveChromaLocation(int  ChromaLoc,  int  FrameProp)
+{
+  if (ChromaLoc != ChromaLoc_Auto)  return  ChromaLoc;
+  return  (FrameProp >= ChromaLoc_Left && FrameProp <= ChromaLoc_Bottom) ? FrameProp : ChromaLoc_Default;
+}
+
+
+
+/* Siting of channel ChannelNo along one axis: 0 = centered in the block, 1 = co-sited with its first, 2 = with its last luma sample */
+static void  ChromaSiting(int  ChromaLoc,  int  ChannelNo,  int &  SitingX,  int &  SitingY)
+{
+  if (ChromaLoc == ChromaLoc_DV)  ChromaLoc = (ChannelNo == 2) ? ChromaLoc_TopLeft : ChromaLoc_BottomLeft;  /* V top, U bottom */
+  SitingX = (ChromaLoc == ChromaLoc_Left || ChromaLoc == ChromaLoc_TopLeft || ChromaLoc == ChromaLoc_BottomLeft) ? 1 : 0;
+  SitingY = (ChromaLoc == ChromaLoc_TopLeft || ChromaLoc == ChromaLoc_Top) ? 1 :
+            (ChromaLoc == ChromaLoc_BottomLeft || ChromaLoc == ChromaLoc_Bottom) ? 2 : 0;
+}
+
+
+
+/* Taps (source index, weight) of each output sample along one axis */
+static std::vector<std::vector<std::pair<int, float>>>  DownsampleTaps(int  Size,  int  P,  int  Siting)
+{
+  std::vector<std::vector<std::pair<int, float>>>  Taps(Size / P);
+  for (int i = 0 ; i < Size / P ; i++)
+  {
+    if (Siting == 0)
+    {
+      for (int d = 0 ; d < P ; d++)  Taps[i].push_back({P*i + d, 1.0f / static_cast<float>(P)});
+    }
+    else
+    {
+      /* Triangle of width 2P around the co-sited luma sample; taps outside the frame are clamped to the edge */
+      const int  c = P*i + ((Siting == 2) ? P - 1 : 0);
+      for (int d = -(P - 1) ; d <= P - 1 ; d++)
+        Taps[i].push_back({std::min(std::max(c + d, 0), Size - 1), static_cast<float>(P - std::abs(d)) / static_cast<float>(P*P)});
+    }
+  }
+  return  Taps;
+}
+
+
+
+void  DownsampleAlpha(float  Dest[],  const float  Src[],  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo)
+{
+  const int  ChWidth = Width / PixelWidth, ChHeight = Height / PixelHeight;
+  int  SitingX, SitingY;
+  ChromaSiting(ChromaLoc, ChannelNo, SitingX, SitingY);
+  if (PixelWidth == 1)  SitingX = 0;
+  if (PixelHeight == 1)  SitingY = 0;
+  if (!SitingX && !SitingY)
+  {
+    /* Block average (the original behaviour, kept bit-exact) */
+    std::fill(Dest, Dest + ChWidth*ChHeight, 0.0f);
+    const float  InvPxCount = 1.0f / static_cast<float>(PixelWidth*PixelHeight);
+    for (int y = 0 ; y < Height ; y++)
+    {
+      const int  ChRowStart = ChWidth * (y / PixelHeight);
+      for (int x = 0 ; x < Width ; x++)  Dest[ChRowStart + x / PixelWidth] += Src[Width*y + x] * InvPxCount;
+    }
+    return;
+  }
+  const auto  TapsX = DownsampleTaps(Width, PixelWidth, SitingX);
+  const auto  TapsY = DownsampleTaps(Height, PixelHeight, SitingY);
+  std::vector<float>  Tmp(static_cast<size_t>(ChWidth) * Height);
+  for (int y = 0 ; y < Height ; y++)
+    for (int x = 0 ; x < ChWidth ; x++)
+    {
+      float  s = 0.0f;
+      for (const auto& t : TapsX[x])  s += t.second * Src[Width*y + t.first];
+      Tmp[ChWidth*y + x] = s;
+    }
+  for (int y = 0 ; y < ChHeight ; y++)
+    for (int x = 0 ; x < ChWidth ; x++)
+    {
+      float  s = 0.0f;
+      for (const auto& t : TapsY[y])  s += t.second * Tmp[ChWidth*t.first + x];
+      Dest[ChWidth*y + x] = s;
+    }
+}
+
+
+
+void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  const  uint8_t  AlphaData[],  int  Pitch,  int  SampleStep,  int  LogoPitch,  int  LogoSampleStep,  int  AlphaPitch,  int  AlphaSampleStep,  int  Width,  int  Height,  int  PixelWidth,  int  PixelHeight,  int  ChromaLoc,  int  ChannelNo)
 /* Performs a simple deblend with given logo and alpha data, where
    the source and logo data are subsampled with respect to the
    alpha data.                                                      */
 {
-  int  x, Alpha, TotalAlpha, xAlpha, yAlpha, AlphaBigPitch;
-  float  Value;
-
-  AlphaBigPitch = AlphaPitch*PixelHeight-AlphaSampleStep*Width;
-  TotalAlpha = PixelWidth*PixelHeight*0xFF;
+  std::vector<float>  FullAlpha(static_cast<size_t>(Width) * Height), Alpha(static_cast<size_t>(Width / PixelWidth) * (Height / PixelHeight));
+  for (int y = 0 ; y < Height ; y++)
+    for (int x = 0 ; x < Width ; x++)
+      FullAlpha[static_cast<size_t>(Width)*y + x] = static_cast<float>(AlphaData[static_cast<ptrdiff_t>(AlphaPitch)*y + x*AlphaSampleStep]);
+  DownsampleAlpha(Alpha.data(), FullAlpha.data(), Width, Height, PixelWidth, PixelHeight, ChromaLoc, ChannelNo);
+  const float * AlphaPtr = Alpha.data();
   Width /= PixelWidth;
   Height /= PixelHeight;
   LogoPitch -= LogoSampleStep*Width;
   Pitch -= SampleStep*Width;
   while (Height--)
   {
-    x = Width;
+    int  x = Width;
     while (x--)
     {
-      Alpha = 0;
-      xAlpha = PixelWidth;
-      while (xAlpha--)
+      /* Same as (255*Data - Alpha*Logo) / (255 - Alpha); for the block average this is bit-identical
+         to the original integer sums, as both only differ by the power-of-2 factor PixelWidth*PixelHeight */
+      const float  a = *(AlphaPtr++);
+      const float  InvAlpha = 255.0f - a;
+      if (InvAlpha > 0.0f)
       {
-        for (yAlpha=0 ; yAlpha<PixelHeight ; yAlpha++)  Alpha += AlphaData[AlphaPitch*yAlpha];
-        AlphaData += AlphaSampleStep;
-      }
-      const int  InvAlpha = TotalAlpha - Alpha;
-      if (InvAlpha)
-      {
-        Value = static_cast<float>(TotalAlpha*((int)(Data[0])) - Alpha*((int)(LogoData[0])));
-        Value *= 1.0f / static_cast<float>(InvAlpha);
+        float  Value = 255.0f*static_cast<float>(Data[0]) - a*static_cast<float>(LogoData[0]);
+        Value *= 1.0f / InvAlpha;
         int iValue = static_cast<int>(Value + 0.5f);
         iValue = std::min(std::max(iValue, 0), 255);
         Data[0] = static_cast<uint8_t>(iValue);
@@ -2661,7 +2769,6 @@ void  DeblendDynamicSubsampled(uint8_t  Data[],  const  uint8_t  LogoData[],  co
       LogoData += LogoSampleStep;
       Data += SampleStep;
     }
-    AlphaData += AlphaBigPitch;
     LogoData += LogoPitch;
     Data += Pitch;
   }
@@ -2704,7 +2811,8 @@ void  DeblendStatic(uint8_t  Data[],  const  uint16_t  LogoData[],  const  uint8
 int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
                            const FrameLayout &  logoFmt,  int  Width,  int  Height,
                            const uint8_t *  logoPlanes[],  int  logoPitch[],
-                           const uint8_t *  alphaPlane,  int  alphaPitch,  int  alphaSampleStep)
+                           const uint8_t *  alphaPlane,  int  alphaPitch,  int  alphaSampleStep,
+                           int  ChromaLoc)
 /* If the logo to be deblended is static (not moving), some values
    can be prepared prior to deblending. Those values will be
    stored in the LogoData/AlphaData vectors, which are later
@@ -2716,7 +2824,7 @@ int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataC
   uint8_t * AlphaDestData;
   uint16_t * DestData;
   int  AlphaPitch0, AlphaSampleStep0;
-  int  ChannelNo, ChannelCount, x, y, x2, y2, Alpha, Logo;
+  int  ChannelNo, ChannelCount, x, y, Alpha, Logo;
 
   ChannelCount = logoFmt.channelCount;
   if ((!ChannelCount) || ((ChannelCount<4) && (!alphaPlane)))  return  -1;
@@ -2733,29 +2841,26 @@ int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataC
     AlphaPitch0 = logoPitch[ChannelCount];
     AlphaSampleStep0 = logoFmt.sampleStep[ChannelCount];
   }
+  std::vector<float>  FullAlpha(static_cast<size_t>(Width) * Height), ChannelAlpha;
+  for (y=0 ; y<Height ; y++)
+    for (x=0 ; x<Width ; x++)
+      FullAlpha[static_cast<size_t>(Width)*y + x] = static_cast<float>(AlphaData0[static_cast<ptrdiff_t>(AlphaPitch0)*y + x*AlphaSampleStep0]);
   for (ChannelNo=0 ; ChannelNo<ChannelCount ; ChannelNo++)
   {
     const int    PW            = logoFmt.pixelWidth[ChannelNo];
     const int    PH            = logoFmt.pixelHeight[ChannelNo];
     const int    ChSampleStep  = logoFmt.sampleStep[ChannelNo];
-    const float  invAlphaScale = 1.0f / static_cast<float>(PW*PH);
     DestData = LogoDataChannels[ChannelNo];
     if (!DestData)  continue;
     SrcData = logoPlanes[ChannelNo];
     AlphaDestData = AlphaDataChannels[ChannelNo];
+    ChannelAlpha.resize(static_cast<size_t>(Width/PW) * (Height/PH));
+    DownsampleAlpha(ChannelAlpha.data(), FullAlpha.data(), Width, Height, PW, PH, ChromaLoc, ChannelNo);
     for (y=0 ; y<Height/PH ; y++)
     {
       for (x=0 ; x<Width/PW ; x++)
       {
-        Alpha = 0;
-        for (y2=0 ; y2<PH ; y2++)
-        {
-          for (x2=0 ; x2<PW ; x2++)
-          {
-            Alpha += AlphaData0[AlphaPitch0*(PH*y+y2)+(x2+x*PW)*AlphaSampleStep0];
-          }
-        }
-        Alpha = static_cast<int>(static_cast<float>(Alpha) * invAlphaScale + 0.5f);
+        Alpha = static_cast<int>(ChannelAlpha[Width/PW*y+x] + 0.5f);
         Logo = Alpha*SrcData[logoPitch[ChannelNo]*y+x*ChSampleStep];
         if (AlphaDestData)  AlphaDestData[Width/PW*y+x] = static_cast<uint8_t>(0xFF-Alpha);
         DestData[Width/PW*y+x] = static_cast<uint16_t>(Logo);
@@ -2771,7 +2876,7 @@ int  DeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataC
 int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDataChannels[],
                               AVS_VideoFrame *  LogoFrame,  AVS_VideoFrame *  AlphaFrame,
                               const  AVS_VideoInfo *  LogoVideoInfo,  const  AVS_VideoInfo *  AlphaVideoInfo,  int  AlphaChannel,
-                              bool  FlipLogo,  bool  FlipAlpha)
+                              bool  FlipLogo,  bool  FlipAlpha,  int  ChromaLoc)
 /* FlipLogo/FlipAlpha: the clip is stored in the other vertical direction than the source (packed vs planar RGB) */
 {
   const FrameLayout  logoFmt = FrameLayoutFromPixelType(LogoVideoInfo->pixel_type);
@@ -2806,7 +2911,30 @@ int  AvsDeblendStaticPrepare(uint16_t *  LogoDataChannels[],  uint8_t *  AlphaDa
   return  DeblendStaticPrepare(LogoDataChannels, AlphaDataChannels,
                                 logoFmt, LogoVideoInfo->width, LogoVideoInfo->height,
                                 logoPlanes, logoPitch,
-                                alphaPlane, alphaPitch, alphaSampleStep);
+                                alphaPlane, alphaPitch, alphaSampleStep, ChromaLoc);
+}
+
+
+
+/* ChromaPlacement argument -> ChromaLocation. "auto" (or not given) takes _ChromaLocation of the first
+   frame of Clip, if the host supports frame properties and it is set. */
+static int  AvsGetChromaLocation(AVS_ScriptEnvironment *  Env,  AVS_Clip *  Clip,  const AVS_Value &  Arg,  const char *  InvalidText,  const char **  ErrorText)
+{
+  const int  ChromaLoc = ParseChromaPlacement(avs_is_string(Arg) ? avs_as_string(Arg) : nullptr);
+  if (ChromaLoc == ChromaLoc_Invalid)  { *ErrorText = InvalidText;  return  ChromaLoc_Default; }
+  int  FrameProp = -1;
+  if (ChromaLoc == ChromaLoc_Auto && avs_get_frame_props_ro && avs_prop_get_int)
+  {
+    AVS_VideoFrame * Frame = avs_get_frame(Clip, 0);
+    if (Frame)
+    {
+      int  err = 0;
+      const int64_t  v = avs_prop_get_int(Env, avs_get_frame_props_ro(Env, Frame), "_ChromaLocation", 0, &err);
+      if (!err)  FrameProp = static_cast<int>(v);
+      avs_release_video_frame(Frame);
+    }
+  }
+  return  ResolveChromaLocation(ChromaLoc, FrameProp);
 }
 #endif  // ENABLE_AVISYNTH
 
@@ -2820,7 +2948,7 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
                  std::function<void(unsigned int)>                           releaseSrcFrame,
                  uint8_t *  destPlanes[],  int  destPitch[],  bool  destHasAlphaRow,
                  unsigned char  Mask[],  int32_t  MaskSize,  int  ComputeAlpha,
-                 double  DeviationWeight,  double  SubsamplingWeight)
+                 double  DeviationWeight,  double  SubsamplingWeight,  int  ChromaLoc)
 /* This function evaluates the source frames and estimates the logo */
 {
   const unsigned int Sum1MaxDelta = 0x80u;
@@ -3002,7 +3130,8 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
     const int  PH      = srcFmt.pixelHeight[ChannelNo];
     const int  ChWidth = Width  / PW;
     const int  ChHeight= Height / PH;
-    if (!ChannelNo || PW!=srcFmt.pixelWidth[ChannelNo-1] || PH!=srcFmt.pixelHeight[ChannelNo-1])
+    /* DV siting differs between U and V, so the downsampled mask is only reused for an identical siting */
+    if (!ChannelNo || PW!=srcFmt.pixelWidth[ChannelNo-1] || PH!=srcFmt.pixelHeight[ChannelNo-1] || ChromaLoc==ChromaLoc_DV)
     {
       if (PW*PH==1)
       {
@@ -3012,18 +3141,12 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
       }
       else
       {
+        /* A chroma sample is masked if any luma sample it is computed from (see DownsampleAlpha) is masked */
+        std::vector<float>  MaskF(static_cast<size_t>(Width) * Height), ChMaskF(static_cast<size_t>(ChWidth) * ChHeight);
+        for (k=0 ; k<Width*Height ; k++)  MaskF[k] = Mask[k] ? 1.0f : 0.0f;
+        DownsampleAlpha(ChMaskF.data(), MaskF.data(), Width, Height, PW, PH, ChromaLoc, ChannelNo);
         ChannelMask = ChannelMaskVector.data();
-        /* Reused per subsampled channel (e.g. U and V in YV12) — must be zeroed before accumulation */
-        std::fill(ChannelMaskVector.begin(), ChannelMaskVector.end(), uint8_t(0));
-        for (y=0 ; y<Height ; y++)
-        {
-          const int  ChRowStart = ChWidth * (y/PH);
-          for (x=0 ; x<Width ; x++)
-          {
-            /* Each macro-pixel is masked if any of its full-res pixels is masked */
-            ChannelMask[ChRowStart + x/PW] += Mask[Width*y+x] ? 1 : 0;
-          }
-        }
+        for (k=0 ; k<ChWidth*ChHeight ; k++)  ChannelMask[k] = (ChMaskF[k] > 0.0f) ? 1 : 0;
         /* Determine size of sub-sampled mask */
         ChannelMaskSize = 0;
         for (k=0 ; k<ChWidth*ChHeight ; k++)  ChannelMaskSize += ChannelMask[k] ? 1 : 0;
@@ -3199,8 +3322,8 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
     const int  PH      = srcFmt.pixelHeight[ChannelNo];
     const int  ChWidth = Width  / PW;
     const int  ChHeight= Height / PH;
-    // optimization: skip recomputing downsampled alpha if the previous channel had the same subsampling
-    if (!(ChannelNo>0 && (PW==srcFmt.pixelWidth[ChannelNo-1]) && (PH==srcFmt.pixelHeight[ChannelNo-1])))
+    // optimization: skip recomputing downsampled alpha if the previous channel had the same subsampling (and siting)
+    if (!(ChannelNo>0 && (PW==srcFmt.pixelWidth[ChannelNo-1]) && (PH==srcFmt.pixelHeight[ChannelNo-1]) && ChromaLoc!=ChromaLoc_DV))
     {
       if (PW*PH==1)
       {
@@ -3209,18 +3332,8 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
       }
       else
       {
-        // explicit zero-init for each subsequent reuse of the same buffer (e.g. U and V in YV12)
-        std::fill(ChannelAlphaVector.begin(), ChannelAlphaVector.end(), 0.0f);
         ChannelAlpha = ChannelAlphaVector.data();
-        const float  InvPxCount = 1.0f / static_cast<float>(PW*PH);
-        for (y=0 ; y<Height ; y++)
-        {
-          const int  ChRowStart = ChWidth * (y/PH);
-          for (x=0 ; x<Width ; x++)
-          {
-            ChannelAlpha[ChRowStart + x/PW] += AlphaChannel[Width*y+x] * InvPxCount;
-          }
-        }
+        DownsampleAlpha(ChannelAlpha, AlphaChannel, Width, Height, PW, PH, ChromaLoc, ChannelNo);
       }
     }
     Sum1Ptr = Sum1[ChannelNo].data();

@@ -552,6 +552,30 @@ static void  VS_CC  vsAnalyzeFree(void *  instanceData,  VSCore *  /*core*/,  co
 }
 
 
+/* chromaplacement argument -> ChromaLocation. "auto" (or not given) takes _ChromaLocation of the first
+   frame of the source clip, if set. */
+static int  VsGetChromaLocation(const VSMap *  in,  VSNode *  srcNode,  const char *  InvalidText,  const char **  ErrorText,  const VSAPI *  vsapi)
+{
+  int  err;
+  const char * Arg = vsapi->mapGetData(in, "chromaplacement", 0, &err);
+  const int  ChromaLoc = ParseChromaPlacement(err ? nullptr : Arg);
+  if (ChromaLoc == ChromaLoc_Invalid)  { *ErrorText = InvalidText;  return  ChromaLoc_Default; }
+  int  FrameProp = -1;
+  if (ChromaLoc == ChromaLoc_Auto)
+  {
+    char errMsg[256];
+    const VSFrame * Frame = vsapi->getFrame(0, srcNode, errMsg, sizeof(errMsg));
+    if (Frame)
+    {
+      const int64_t  v = vsapi->mapGetInt(vsapi->getFramePropertiesRO(Frame), "_ChromaLocation", 0, &err);
+      if (!err)  FrameProp = static_cast<int>(v);
+      vsapi->freeFrame(Frame);
+    }
+  }
+  return  ResolveChromaLocation(ChromaLoc, FrameProp);
+}
+
+
 static void  VS_CC  vsAnalyzeCreate(const VSMap *  in,  VSMap *  out,  void *  /*userData*/,  VSCore *  core,  const VSAPI *  vsapi)
 {
   int  err;
@@ -589,6 +613,10 @@ static void  VS_CC  vsAnalyzeCreate(const VSMap *  in,  VSMap *  out,  void *  /
     ErrorText = "AnalyzeLogo: SubsamplingWeight must not be negative";
   if (!ErrorText && ComputeAlpha && srcVI->numFrames < 2)
     ErrorText = "AnalyzeLogo: Source clip must have at least two frames for alpha computation";
+  int  ChromaLoc = ChromaLoc_Default;
+  if (!ErrorText)
+    ChromaLoc = VsGetChromaLocation(in, srcNode,
+      "AnalyzeLogo: chromaplacement must be \"auto\", \"left\" (\"mpeg2\"), \"center\" (\"mpeg1\", \"jpeg\"), \"top_left\", \"top\", \"bottom_left\", \"bottom\" or \"dv\"", &ErrorText, vsapi);
 
   if (ErrorText)
   {
@@ -679,7 +707,7 @@ static void  VS_CC  vsAnalyzeCreate(const VSMap *  in,  VSMap *  out,  void *  /
     static_cast<unsigned int>(srcVI->numFrames),
     fetchSrcFrame, releaseSrcFrame,
     destPlanes, destPitch, true,
-    Mask, MaskSize, ComputeAlpha, DeviationWeight, SubsamplingWeight);
+    Mask, MaskSize, ComputeAlpha, DeviationWeight, SubsamplingWeight, ChromaLoc);
 
   vsapi->freeNode(srcNode);
 
@@ -723,6 +751,7 @@ struct VSDeblendData
   FrameLayout  layout;      /* src format */
   FrameLayout  logoLayout;  /* logo format */
   int  logoFrameCount, alphaFrameCount;
+  int  ChromaLoc;  /* siting of subsampled chroma (ChromaLocation) */
   /* Static logo storage (populated at creation when logo has 1 frame) */
   std::array<std::vector<uint16_t>, MaxChannelCount>  StaticLogoDataChannels;
   std::array<std::vector<uint8_t>, MaxChannelCount>     StaticAlphaDataChannels;
@@ -825,7 +854,7 @@ static const VSFrame *  VS_CC  vsDeblendGetFrame(int  n,  int  activationReason,
           FramePitch[ch], d->layout.sampleStep[ch],
           LogoPitch[ch], d->logoLayout.sampleStep[ch],
           alphaPitch, alphaSampleStep, d->Width, d->Height,
-          d->layout.pixelWidth[ch], d->layout.pixelHeight[ch]);
+          d->layout.pixelWidth[ch], d->layout.pixelHeight[ch], d->ChromaLoc, ch);
     }
 
     if (alphaFrame)  vsapi->freeFrame(alphaFrame);
@@ -886,6 +915,10 @@ static void  VS_CC  vsDeblendCreate(const VSMap *  in,  VSMap *  out,  void *  /
     else if (alphaVI->width != srcVI->width || alphaVI->height != srcVI->height)
       ErrorText = "DeblendLogo: Source and alpha clips have different dimensions";
   }
+  int  ChromaLoc = ChromaLoc_Default;
+  if (!ErrorText)
+    ChromaLoc = VsGetChromaLocation(in, srcNode,
+      "DeblendLogo: chromaplacement must be \"auto\", \"left\" (\"mpeg2\"), \"center\" (\"mpeg1\", \"jpeg\"), \"top_left\", \"top\", \"bottom_left\", \"bottom\" or \"dv\"", &ErrorText, vsapi);
 
   if (ErrorText)
   {
@@ -913,6 +946,7 @@ static void  VS_CC  vsDeblendCreate(const VSMap *  in,  VSMap *  out,  void *  /
   d->logoLayout     = FrameLayoutFromVSFormat(logoVI->format);
   d->logoFrameCount = logoVI->numFrames;
   d->alphaFrameCount = alphaVI ? alphaVI->numFrames : 0;
+  d->ChromaLoc      = ChromaLoc;
 
   const bool  isStatic = (logoVI->numFrames == 1) && (!alphaNode || alphaVI->numFrames == 1);
 
@@ -935,7 +969,11 @@ static void  VS_CC  vsDeblendCreate(const VSMap *  in,  VSMap *  out,  void *  /
             / d->logoLayout.pixelWidth[ch] / d->logoLayout.pixelHeight[ch]);
         d->StaticAlphaDataChannels[0].resize(srcVI->width * srcVI->height);
         if (d->layout.colorFamily == ColorFamily::YUV)
+        {
           d->StaticAlphaDataChannels[1].resize(srcVI->width * srcVI->height);
+          /* DV siting: V has its own downsampled alpha */
+          if (d->ChromaLoc == ChromaLoc_DV)  d->StaticAlphaDataChannels[2].resize(srcVI->width * srcVI->height);
+        }
       }
       catch (std::bad_alloc &)  { ErrorText = "DeblendLogo: Could not allocate memory"; }
     }
@@ -966,7 +1004,7 @@ static void  VS_CC  vsDeblendCreate(const VSMap *  in,  VSMap *  out,  void *  /
       if (0 > DeblendStaticPrepare(logoPtrs, alphaPtrs,
                                     d->logoLayout, srcVI->width, srcVI->height,
                                     logoPlanes, logoPitch,
-                                    alphaPlane, alphaPitch, 1))
+                                    alphaPlane, alphaPitch, 1, d->ChromaLoc))
         ErrorText = "DeblendLogo: Could not gather logo frame data";
     }
 
@@ -1142,7 +1180,7 @@ VS_EXTERNAL_API(void)  VapourSynthPluginInit2(VSPlugin *  plugin,  const VSPLUGI
 
   vspapi->registerFunction("AnalyzeLogo",
     "clip:vnode;mask:vnode;"
-    "computealpha:int:opt;deviationweight:float:opt;subsamplingweight:float:opt;",
+    "computealpha:int:opt;deviationweight:float:opt;subsamplingweight:float:opt;chromaplacement:data:opt;",
     "clip:vnode;",
     vsAnalyzeCreate, nullptr, plugin);
 
@@ -1152,7 +1190,7 @@ VS_EXTERNAL_API(void)  VapourSynthPluginInit2(VSPlugin *  plugin,  const VSPLUGI
     vsDistanceFunctionCreate, nullptr, plugin);
 
   vspapi->registerFunction("DeblendLogo",
-    "clip:vnode;logo:vnode;alpha:vnode:opt;",
+    "clip:vnode;logo:vnode;alpha:vnode:opt;chromaplacement:data:opt;",
     "clip:vnode;",
     vsDeblendCreate, nullptr, plugin);
 }

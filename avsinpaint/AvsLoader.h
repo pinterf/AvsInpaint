@@ -61,6 +61,10 @@ extern avs_get_read_ptr_p_func      avs_get_read_ptr_p;
 extern avs_get_write_ptr_p_func     avs_get_write_ptr_p;
 extern avs_set_to_clip_func         avs_set_to_clip;
 
+// Optional (AviSynth+ with frame properties, interface V9+); nullptr on older hosts.
+extern avs_get_frame_props_ro_func  avs_get_frame_props_ro;
+extern avs_prop_get_int_func        avs_prop_get_int;
+
 // ---------------------------------------------------------------------------
 // Set to true when avisynth_c_plugin_init2 is called (AviSynth+ >= 3.7.4):
 // the host understands int64/double in AVS_Value natively.

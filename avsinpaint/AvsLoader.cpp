@@ -52,6 +52,8 @@ avs_get_pitch_p_func         avs_get_pitch_p         = nullptr;
 avs_get_read_ptr_p_func      avs_get_read_ptr_p      = nullptr;
 avs_get_write_ptr_p_func     avs_get_write_ptr_p     = nullptr;
 avs_set_to_clip_func         avs_set_to_clip         = nullptr;
+avs_get_frame_props_ro_func  avs_get_frame_props_ro  = nullptr;
+avs_prop_get_int_func        avs_prop_get_int        = nullptr;
 
 bool g_is_v11_64bit_data_capable_host = false;
 
@@ -87,6 +89,9 @@ bool avs_loader_init()
     LOAD(avs_get_write_ptr_p);
     LOAD(avs_set_to_clip);
 #undef LOAD
+    avs_get_frame_props_ro = (avs_get_frame_props_ro_func)lib_sym("avs_get_frame_props_ro");
+    avs_prop_get_int       = (avs_prop_get_int_func)lib_sym("avs_prop_get_int");
+    if (!avs_get_frame_props_ro || !avs_prop_get_int)  avs_get_frame_props_ro = nullptr, avs_prop_get_int = nullptr;
     return true;
     // s_hLib is intentionally not closed: releasing the library handle while
     // any code still references its symbols causes undefined behaviour, and
