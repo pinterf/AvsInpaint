@@ -2,8 +2,11 @@
   <Configurations>
     <BuildType Name="Debug" />
     <BuildType Name="DebugClangCL" />
+    <!-- VS-only: VapourSynth plugin without any AviSynth code (ENABLE_AVISYNTH not defined) -->
+    <BuildType Name="DebugVSOnly" />
     <BuildType Name="Release" />
     <BuildType Name="ReleaseClangCL" />
+    <BuildType Name="ReleaseVSOnly" />
     <BuildType Name="RelWithDebInfo" />
     <Platform Name="x64" />
     <Platform Name="x86" />
@@ -11,5 +14,7 @@
   <Project Path="AvsInPaint/AvsInPaint.vcxproj" Id="4cb1be69-c546-49d5-934d-7cb6d8994291">
     <Platform Solution="DebugClangCL|x86" Project="x64" />
     <Platform Solution="ReleaseClangCL|x86" Project="x64" />
+    <Platform Solution="DebugVSOnly|x86" Project="Win32" />
+    <Platform Solution="ReleaseVSOnly|x86" Project="Win32" />
   </Project>
 </Solution>

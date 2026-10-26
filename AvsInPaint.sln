@@ -1,4 +1,4 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
 VisualStudioVersion = 18.4.11626.88 stable
@@ -9,12 +9,16 @@ Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
 		Debug|x86 = Debug|x86
+		DebugVSOnly|x64 = DebugVSOnly|x64
+		DebugVSOnly|x86 = DebugVSOnly|x86
 		DebugClangCL|x64 = DebugClangCL|x64
 		DebugClangCL|x86 = DebugClangCL|x86
 		Release|x64 = Release|x64
 		Release|x86 = Release|x86
 		ReleaseClangCL|x64 = ReleaseClangCL|x64
 		ReleaseClangCL|x86 = ReleaseClangCL|x86
+		ReleaseVSOnly|x64 = ReleaseVSOnly|x64
+		ReleaseVSOnly|x86 = ReleaseVSOnly|x86
 		RelWithDebInfo|x64 = RelWithDebInfo|x64
 		RelWithDebInfo|x86 = RelWithDebInfo|x86
 	EndGlobalSection
@@ -23,6 +27,10 @@ Global
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.Debug|x64.Build.0 = Debug|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.Debug|x86.ActiveCfg = Debug|Win32
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.Debug|x86.Build.0 = Debug|Win32
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.DebugVSOnly|x64.ActiveCfg = DebugVSOnly|x64
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.DebugVSOnly|x64.Build.0 = DebugVSOnly|x64
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.DebugVSOnly|x86.ActiveCfg = DebugVSOnly|Win32
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.DebugVSOnly|x86.Build.0 = DebugVSOnly|Win32
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.DebugClangCL|x64.ActiveCfg = DebugClangCL|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.DebugClangCL|x64.Build.0 = DebugClangCL|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.DebugClangCL|x86.ActiveCfg = DebugClangCL|x64
@@ -35,6 +43,10 @@ Global
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseClangCL|x64.Build.0 = ReleaseClangCL|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseClangCL|x86.ActiveCfg = ReleaseClangCL|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseClangCL|x86.Build.0 = ReleaseClangCL|x64
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseVSOnly|x64.ActiveCfg = ReleaseVSOnly|x64
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseVSOnly|x64.Build.0 = ReleaseVSOnly|x64
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseVSOnly|x86.ActiveCfg = ReleaseVSOnly|Win32
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseVSOnly|x86.Build.0 = ReleaseVSOnly|Win32
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.RelWithDebInfo|x64.ActiveCfg = RelWithDebInfo|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.RelWithDebInfo|x64.Build.0 = RelWithDebInfo|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.RelWithDebInfo|x86.ActiveCfg = RelWithDebInfo|Win32
