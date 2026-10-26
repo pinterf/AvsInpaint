@@ -3126,7 +3126,10 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
   for (auto& v : Sum2)  { v.clear(); v.shrink_to_fit(); }
   /** The destination frame pointers are determined **/
   /* Now we're approaching color-space dependent code !! */
-  if (srcFmt.colorFamily != ColorFamily::RGB)  /* YUV or Gray */
+  /* Packed RGB (RGB24/RGB32) is stored bottom-up, so its first Height rows in memory are the lower
+     half of the picture. Planar RGB (RGBP/RGBAP, VapourSynth RGB) is stored top-down like YUV. */
+  const bool  PackedRGB = (srcFmt.colorFamily == ColorFamily::RGB) && (srcFmt.sampleStep[0] > 1);
+  if (srcFmt.colorFamily != ColorFamily::RGB || (destHasAlphaRow && !PackedRGB))  /* YUV, Gray or planar RGB with alpha row */
   {
     AlphaData = destPlanes[0]+Height*destPitch[0];
     AlphaPitch = destPitch[0];
@@ -3232,7 +3235,17 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
         }
       }
     }
-    if (srcFmt.colorFamily == ColorFamily::RGB)
+    if (srcFmt.colorFamily == ColorFamily::RGB && !PackedRGB)  /* planar RGB: R=G=B=alpha, A=0 in the alpha-row area */
+    {
+      for (ChannelNo=1 ; ChannelNo<srcFmt.channelCount ; ChannelNo++)
+      {
+        DestPtr = destPlanes[ChannelNo]+Height*destPitch[ChannelNo];
+        for (y=0 ; y<Height ; y++)
+          for (x=0 ; x<Width ; x++)
+            DestPtr[destPitch[ChannelNo]*y+x] = (ChannelNo<3) ? AlphaData[y*AlphaPitch+x] : 0;
+      }
+    }
+    if (PackedRGB)
     {
       for (y=0 ; y<Height ; y++)
       {
