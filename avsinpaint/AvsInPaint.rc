@@ -29,12 +29,14 @@ BEGIN
     BEGIN
         BLOCK "040004b0"
         BEGIN
-            VALUE "Comments", "Motion estimation and compensation"
+            VALUE "Comments", "Logo inpainting, deblending and analysis"
             VALUE "CompanyName", "Wolfgang Boiger"
-            VALUE "FileDescription", "AvsInPaint for Avisynth C v11/VapourSynth v4 interface"
+            VALUE "FileDescription", "AvsInPaint for AviSynth (C interface) and VapourSynth v4"
             VALUE "FileVersion", "1.4"
             VALUE "InternalName", "AvsInPaint"
-            VALUE "LegalCopyright", "Copyright (C)  2007, 2008  Wolfgang Boiger, 2019-2026 pinterf"
+            // Keep this file ASCII: llvm-rc and windres ignore the code page pragma, so
+            // non-ASCII characters are written as wide-string escapes (\x00E9 = e acute).
+            VALUE "LegalCopyright", L"Copyright (C)  2007, 2008  Wolfgang Boiger, 2019-2026 Ferenc Pint\x00E9r"
             VALUE "OriginalFilename", "AvsInPaint.dll"
             VALUE "ProductName", "AvsInPaint"
             VALUE "ProductVersion", "1.4"
@@ -54,7 +56,7 @@ END
 //
 // Generated from the TEXTINCLUDE 2 resource.
 //
-
+
 /////////////////////////////////////////////////////////////////////////////
 #endif    // not APSTUDIO_INVOKED
 
