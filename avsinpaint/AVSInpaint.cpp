@@ -2,7 +2,7 @@
  This file is part of
         Logo Inpainting for AviSynth by Wolfgang Boiger
  Copyright (C)  2007, 2008  Wolfgang Boiger, Berlin
- Additional work (C) 2019-2026 by Ferenc Pintér
+ Additional work and VapourSynth support (C) 2019-2026 by Ferenc Pintér
 
  This program is free software; you can redistribute it and/or
  modify it under the terms of the GNU General Public License
@@ -32,24 +32,9 @@
    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  **************************************************************/
 
-// 2008.02.23 - Original version
-// 20190624
-// change to AVS+ headers
-// change avs_is_yuy to avs_is_yuv (Function name changed, it is not the same as avs_is_yuy2!)
-// Add resource file for DLL versioning, version 1.1
-// For newer changes: see readme
-
-//#define  VersionString  "2008.02.23"
-//#define  VersionString  "2019.06.27 1.2"
-//#define  VersionString  "2021.10.25 1.3"
-#define  VersionString  "2026.10.28 1.4"
-
 
 constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= reallocation of memory), how many elemnts to add */
 /* FMMHeapInitialSize is inlined at usage as: 4*(Width+Height+FMMHeapDelta) */
-
-
-#define  FMMFarMarker  ((float)(32.0*INT_MAX))  /* Should be bigger than the maximal diameter of a frame */
 
 
 
@@ -63,6 +48,7 @@ constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= real
 #include  <algorithm>
 #include  <array>
 #include  <functional>
+#include  <limits>
 #include  <type_traits>
 #include  <vector>
 
@@ -71,10 +57,12 @@ constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= real
 #include  "AvsLoader.h"
 #endif
 
+constexpr float  FMMFarMarker  = static_cast<float>(32.0*INT_MAX);  /* Should be bigger than the maximal diameter of a frame */
+
 typedef  int32_t   Analyze_Sum1Type;  /* Data types used for summation in Analyze function */
 typedef  uint32_t  Analyze_Sum2Type;
-#define  Analyze_Sum1Max  INT32_MAX   /* Maximal values for summation data types (summation will stop here) */
-#define  Analyze_Sum2Max  UINT32_MAX
+constexpr Analyze_Sum1Type  Analyze_Sum1Max = std::numeric_limits<Analyze_Sum1Type>::max();  /* Maximal values for summation data types (summation will stop here) */
+constexpr Analyze_Sum2Type  Analyze_Sum2Max = std::numeric_limits<Analyze_Sum2Type>::max();
 
 
 /* InpaintMaskDataStruct and InpaintDataStruct are defined in InpaintCore.h */
@@ -3036,6 +3024,17 @@ static int  AvsGetChromaLocation(AVS_ScriptEnvironment *  Env,  AVS_Clip *  Clip
 /****************************************************************
                       Analyze tools
  ****************************************************************/
+/* Kahan's summation algorithm reduces numerical problems - hopefully compiler optimization won't destroy this */
+static inline void  KahanAdd(double& Sum, double  Value, double& C)
+{
+  double  Y = Value;
+  Y -= C;
+  const double  T = Sum + Y;
+  C = T - Sum;
+  C -= Y;
+  Sum = T;
+}
+
 int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsigned int  FrameCount,
                  std::function<bool(unsigned int, const uint8_t*[], int[])>  fetchSrcFrame,
                  std::function<void(unsigned int)>                           releaseSrcFrame,
@@ -3046,7 +3045,6 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
 {
   const unsigned int Sum1MaxDelta = 0x80u;
   const uint32_t Sum2MaxDelta = static_cast<uint32_t>(Sum1MaxDelta)*static_cast<uint32_t>(Sum1MaxDelta);
-  #define  KahanAdditionMakro(S,A,C,T,Y)  {Y=(A);Y-=C;T=S+Y;C=T-S;C-=Y;S=T;}  /* Kahan's summation algorithm reduces numerical problems - hopefully compiler optimization won't destroy this */
 
   std::array<std::vector<Analyze_Sum1Type>, MaxChannelCount> Sum1;
   std::array<std::vector<Analyze_Sum2Type>, MaxChannelCount> Sum2;
@@ -3076,7 +3074,7 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
      only the first k elements are filled and sorted per channel iteration. */
   std::vector<Analyze_Sum1Type> NMSum1;
   std::vector<Analyze_Sum2Type> NMSum2;  // only populated when ComputeAlpha
-  double  ChannelNMSum1[MaxChannelCount], ChannelNMSum2[MaxChannelCount], KahanSum, KahanC, KahanY, KahanT;
+  double  ChannelNMSum1[MaxChannelCount], ChannelNMSum2[MaxChannelCount], KahanSum, KahanC;
   int  ChannelMaskSize;
   /* Variables for Phase 3 */
   float * AlphaChannel, * ChannelAlpha;
@@ -3290,14 +3288,14 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
               [](Analyze_Sum1Type a, Analyze_Sum1Type b){ return std::abs(a) < std::abs(b); });
     KahanSum = 0.0;
     KahanC = 0.0;
-    for (k=0 ; k<NMCount ; k++)  KahanAdditionMakro(KahanSum,NMSum1[k],KahanC,KahanT,KahanY);
+    for (k=0 ; k<NMCount ; k++)  KahanAdd(KahanSum,NMSum1[k],KahanC);
     ChannelNMSum1[ChannelNo] = KahanSum;
     if (ComputeAlpha)
     {
       std::sort(NMSum2.begin(), NMSum2.begin()+NMCount);  // ascending, unsigned values
       KahanSum = 0.0;
       KahanC = 0.0;
-      for (k=0 ; k<NMCount ; k++)  KahanAdditionMakro(KahanSum,NMSum2[k],KahanC,KahanT,KahanY);
+      for (k=0 ; k<NMCount ; k++)  KahanAdd(KahanSum,NMSum2[k],KahanC);
       ChannelNMSum2[ChannelNo] = KahanSum;
     }
     /* Compute averages and variances of non-masked pixels */
@@ -3558,9 +3556,4 @@ int32_t  Analyze(const FrameLayout &  srcFmt,  int  Width,  int  Height,  unsign
     }
   }
   return  static_cast<int32_t>(FrameCount);
-
-  #undef  KahanAdditionMakro
 }
-
-
-

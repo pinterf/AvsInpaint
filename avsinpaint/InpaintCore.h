@@ -13,13 +13,8 @@
 /*****  Compile-time algorithm configuration  *****/
 
 #define  BlurStandardDeviation  1  /* 1:blur-intensity=standard-deviation of Gauss-Kernel  0:blur-intensity=scale of autonomous heat equation u_t=tr(u_xx) */
-#define  MaskThreshold  127  /* When the position of a logo (or something else) is given by a Y8-mask, the logo is supposed to be where  Sign(MT)*Mask>MT  holds */
-
-#if  (MaskThreshold>0)
-#define  MaskThresholdSign  (+1)
-#else
-#define  MaskThresholdSign  (-1)
-#endif
+constexpr int  MaskThreshold  = 127;  /* When the position of a logo (or something else) is given by a Y8-mask, the logo is supposed to be where  Sign(MT)*Mask>MT  holds */
+constexpr int  MaskThresholdSign  = (MaskThreshold>0) ? (+1) : (-1);
 
 constexpr double  InpaintMinRadiusXY  = 1.001; /* Will consider at least the 5-point-stencil */
 constexpr int     InpaintMinPreBlurXYKernelSize  = 0;    /* It should hold  InpaintMinPreBlurXYKernelSize+InpaintMinPostBlurXYKernelSizeShould>=2  */
