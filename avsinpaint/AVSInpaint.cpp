@@ -93,7 +93,7 @@ struct DeblendDataStruct
   std::array<std::vector<uint8_t>, MaxChannelCount>         StaticAlphaDataChannels;
   /* Dynamic logo */
   AVS_Clip * LogoClip, * AlphaClip;
-  int  LogoPixelType, AlphaPixelType, LogoFrameCount, AlphaFrameCount, AlphaSampleStep, AlphaChannelNo;
+  int  AlphaPixelType, LogoFrameCount, AlphaFrameCount, AlphaSampleStep, AlphaChannelNo;
   FrameLayout  logoLayout;
   bool  FlipLogo, FlipAlpha;  /* storage direction differs from the source (packed RGB is bottom-up) */
   int  ChromaLoc;  /* siting of subsampled chroma (ChromaLocation) */
@@ -101,7 +101,7 @@ struct DeblendDataStruct
   DeblendDataStruct() :
     PixelType(0), Width(0), Height(0), layout(),
     LogoClip(nullptr), AlphaClip(nullptr),
-    LogoPixelType(0), AlphaPixelType(0), LogoFrameCount(0), AlphaFrameCount(0), AlphaSampleStep(0), AlphaChannelNo(0), logoLayout(),
+    AlphaPixelType(0), LogoFrameCount(0), AlphaFrameCount(0), AlphaSampleStep(0), AlphaChannelNo(0), logoLayout(),
     FlipLogo(false), FlipAlpha(false), ChromaLoc(ChromaLoc_Default)
   {}
 };
@@ -936,7 +936,6 @@ AVS_Value  AVSC_CC  Deblend_Create(AVS_ScriptEnvironment *  Env,  AVS_Value  Arg
       DeblendData->PixelType = SrcVideoInfo->pixel_type;
       DeblendData->Width = SrcVideoInfo->width;
       DeblendData->Height = SrcVideoInfo->height;
-      DeblendData->LogoPixelType = LogoVideoInfo->pixel_type;
       DeblendData->AlphaPixelType = AlphaVideoInfo?AlphaVideoInfo->pixel_type:0;
       DeblendData->LogoFrameCount = LogoVideoInfo->num_frames;
       DeblendData->AlphaFrameCount = AlphaVideoInfo?AlphaVideoInfo->num_frames:0;
@@ -1094,7 +1093,7 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   AVS_VideoFrame * Frame, * LogoFrame, * AlphaFrame;
   int  ChannelCount, Width, Height, FramePitch[MaxChannelCount];
   const int  * FrameSampleStep, * FramePixelWidth, * FramePixelHeight;
-  int  LogoChannelCount, LogoPixelType, LogoFramePitch[MaxChannelCount];
+  int  LogoChannelCount, LogoFramePitch[MaxChannelCount];
   const int  * LogoFrameSampleStep;
   int  AlphaChannelCount, AlphaPixelType, AlphaFramePitch[MaxChannelCount], AlphaPitch, AlphaSampleStep;
   uint8_t * FrameData[MaxChannelCount];
@@ -1114,7 +1113,6 @@ AVS_VideoFrame *  AVSC_CC  Deblend_Dynamic_GetFrame(AVS_FilterInfo *  FilterInfo
   Frame = avs_get_frame(FilterInfo->child,FrameNo);
   avs_make_writable(FilterInfo->env,&Frame);
   ChannelCount = AvsGetFramePlanes(Frame,DeblendData->layout,FrameData,FramePitch) ? DeblendData->layout.channelCount : 0;
-  LogoPixelType = DeblendData->LogoPixelType;
   LogoFrame = avs_get_frame(DeblendData->LogoClip,(FrameNo<DeblendData->LogoFrameCount)?FrameNo:(DeblendData->LogoFrameCount-1));
   LogoChannelCount = AvsGetFramePlanesRO(LogoFrame,DeblendData->logoLayout,LogoFrameData,LogoFramePitch) ? DeblendData->logoLayout.channelCount : 0;
   if (DeblendData->FlipLogo)
