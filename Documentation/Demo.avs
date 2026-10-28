@@ -35,7 +35,6 @@
 # the plugin.
 
 
-
 # Set some variables for the output clip
 OutputSize = 192  # Several clips will be stacked toghether - this is the width and height of each of those
 FontSize = 13  # Each clip will have some description on it
@@ -56,12 +55,6 @@ InpaintRadius = Size/12.0  # Similar to "Depth"
 InpaintSharpness = 25.0
 InpaintPreBlur = Size/50.0
 InpaintPostBlur = Size/30.0
-
-
-
-# Load the Logo Inpainting plugin
-LoadCPlugin("AVSInpaint.dll")
-
 
 
 # Creates a funny colorfull clip
@@ -236,7 +229,3 @@ RepairedClip
                                          StackVertical(Clip,LogoColor,LogoAlpha),\
                                          StackVertical(DeblendedClip,RepairMask,RepairedClip),\
                                          StackVertical(NoClip,FinalClip,NoClip))
-
-# Add copyright notice
-CB = Trim(0,-1).Loop(Round(FrameRate))
-(OutputVerbosity<2)?last:CB.Levels(0,1,255,0,47).ScriptClip("""InpaintLogo(Mask=ConvertToYV12,Steps=-9)""").Trim(0,-1).Subtitle("Logo Inpainting copyright notice (with error notice, which may be ignored)",align=2).Loop(5*CB.FrameCount).Dissolve(CB,CB.FrameCount-1)+last
