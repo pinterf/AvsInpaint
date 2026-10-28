@@ -43,7 +43,12 @@ devenv AvsInPaint.sln  /Build "Release|x64"     rem Visual Studio 2022
 ```
 
 Available configurations: `Debug|Win32`, `Debug|x64`, `Release|Win32`, `Release|x64`,
-`RelWithDebInfo|Win32`, `RelWithDebInfo|x64`, `ReleaseClangCL|x64`, `DebugClangCL|x64`
+`RelWithDebInfo|Win32`, `RelWithDebInfo|x64`, `ReleaseClangCL|x64`, `DebugClangCL|x64`,
+`ReleaseV143|Win32`, `ReleaseV143|x64`
+
+The project uses the Visual Studio 2026 toolset (v145). `ReleaseV143` is the same as
+`Release` but built with the Visual Studio 2022 toolset (v143, MSVC 19.44), for Windows 7
+compatibility. With Visual Studio 2026 it needs the "MSVC v143 build tools" component.
 
 Dual-interface configurations (the default) build **both** the AviSynth and the
 VapourSynth front end into one DLL — the DLL exports `avisynth_c_plugin_init`,

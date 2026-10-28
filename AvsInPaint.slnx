@@ -6,6 +6,8 @@
     <BuildType Name="DebugVSOnly" />
     <BuildType Name="Release" />
     <BuildType Name="ReleaseClangCL" />
+    <!-- MSVC v143 (VS 2022, 19.44) toolset, e.g. for Windows 7 -->
+    <BuildType Name="ReleaseV143" />
     <BuildType Name="ReleaseVSOnly" />
     <BuildType Name="RelWithDebInfo" />
     <Platform Name="x64" />

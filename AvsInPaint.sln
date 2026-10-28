@@ -17,6 +17,8 @@ Global
 		Release|x86 = Release|x86
 		ReleaseClangCL|x64 = ReleaseClangCL|x64
 		ReleaseClangCL|x86 = ReleaseClangCL|x86
+		ReleaseV143|x64 = ReleaseV143|x64
+		ReleaseV143|x86 = ReleaseV143|x86
 		ReleaseVSOnly|x64 = ReleaseVSOnly|x64
 		ReleaseVSOnly|x86 = ReleaseVSOnly|x86
 		RelWithDebInfo|x64 = RelWithDebInfo|x64
@@ -43,6 +45,10 @@ Global
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseClangCL|x64.Build.0 = ReleaseClangCL|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseClangCL|x86.ActiveCfg = ReleaseClangCL|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseClangCL|x86.Build.0 = ReleaseClangCL|x64
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseV143|x64.ActiveCfg = ReleaseV143|x64
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseV143|x64.Build.0 = ReleaseV143|x64
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseV143|x86.ActiveCfg = ReleaseV143|Win32
+		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseV143|x86.Build.0 = ReleaseV143|Win32
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseVSOnly|x64.ActiveCfg = ReleaseVSOnly|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseVSOnly|x64.Build.0 = ReleaseVSOnly|x64
 		{4CB1BE69-C546-49D5-934D-7CB6D8994291}.ReleaseVSOnly|x86.ActiveCfg = ReleaseVSOnly|Win32

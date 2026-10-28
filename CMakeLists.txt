@@ -1,11 +1,12 @@
-# Tested generators:
-# Command line makefile generator
-# "MinGW Makefiles": MSYS2/Mingw64 GCC build
-# IDE project file generators
-# "Visual Studio 17 2022" optional platform generator Win32 and x64
-# "Visual Studio 17 2022" optional platform generator Win32 and x64. optional toolset "clangcl"
-# "Visual Studio 18 2026" optional platform generator Win32 and x64
-# "Visual Studio 18 2026" optional platform generator Win32 and x64. optional toolset "clangcl"
+# Builds in use:
+# Windows, Visual Studio generators: "Visual Studio 18 2026" and "Visual Studio 17 2022",
+#   platform (-A) Win32 or x64, optional toolset (-T) "ClangCL".
+#   With VS 2026, -T v143 builds with the VS 2022 compiler (for Windows 7 compatibility).
+# Windows, MinGW: MSYS2 MinGW-w64 GCC (default generator, see README).
+# Windows ARM64: llvm-mingw cross build, Ninja (build_arm64_mingw.bat,
+#   cmake/toolchains/llvm-mingw-aarch64.cmake).
+# Linux and macOS: GCC or Clang (default generator).
+# Linux aarch64: cross build (build_aarch64_linux.sh, cmake/toolchains/aarch64-linux-gnu.cmake).
 
 CMAKE_MINIMUM_REQUIRED( VERSION 3.8.2 )
 
@@ -29,12 +30,11 @@ endif()
 
 IF( MSVC )  # Check for Visual Studio
 
-  #1910-1919 = VS 15.0 (v141 toolset) Visual Studio 2017
-  #1920-1929 = VS 16.0 (v142 toolset) Visual Studio 2019
-  #1930-1939 = VS 17.0 (v143 toolset) Visual Studio 2022
+  #1930-1949 = VS 17 (v143 toolset) Visual Studio 2022
+  #1950-     = VS 18 (v145 toolset) Visual Studio 2026
 
-  IF( MSVC_VERSION VERSION_LESS 1910 )
-    MESSAGE(FATAL_ERROR "Visual C++ 2017 or newer required.")
+  IF( MSVC_VERSION VERSION_LESS 1930 )
+    MESSAGE(FATAL_ERROR "Visual C++ 2022 or newer required.")
   ENDIF()
 
   IF(MSVC_IDE)
@@ -42,12 +42,6 @@ IF( MSVC )  # Check for Visual Studio
     string( TOLOWER "${CMAKE_GENERATOR_TOOLSET}" cmake_gentoolset_lower)
 
     IF(cmake_gentoolset_lower STREQUAL "llvm" OR cmake_gentoolset_lower STREQUAL "clangcl")
-      if(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
-        message("LLVM toolset was specified via -T. Compiler ID is: ${CMAKE_CXX_COMPILER_ID}; CMAKE_CXX_COMPILER_VERSION is: ${CMAKE_CXX_COMPILER_VERSION}")
-        if( CMAKE_CXX_COMPILER_VERSION VERSION_LESS 7.0.1 )
-          MESSAGE(FATAL_ERROR "Clang 7.0.1 or newer required")
-        endif()
-      endif()
       set(CLANG_IN_VS "1")
     ENDIF()
   ENDIF()
@@ -64,10 +58,8 @@ IF( MSVC )  # Check for Visual Studio
   ELSE()
     STRING( REPLACE "/EHsc" "/EHa" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
     STRING( REPLACE "/EHsc" "/EHa" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-    if (NOT (MSVC_VERSION LESS 1930))
-      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /fp:contract")
-      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /fp:contract")
-    endif()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /fp:contract")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /fp:contract")
   ENDIF()
 
   # Prevent VC++ from complaining about not using MS-specific functions
@@ -87,10 +79,8 @@ IF( MSVC )  # Check for Visual Studio
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-gcc-compat")
   ENDIF()
 
-  if (NOT (MSVC_VERSION LESS 1910))
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /permissive-")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /permissive-")
-  endif()
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /permissive-")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /permissive-")
 
 ELSE()
 
