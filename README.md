@@ -247,6 +247,7 @@ other AI tools as well, plus my own coding and ideas and tests.
 - Visual Studio 2026 `.slnx` solution file added alongside the legacy `.sln`
 - `RelWithDebInfo` build configurations added for Win32 and x64 (release optimizations + full PDB, no WholeProgramOptimization)
 - `DebugClangCL` and `ReleaseClangCL` configurations added for x64 (`PlatformToolset=ClangCL`); library path via `AdditionalLibraryDirectories` for lld-link compatibility
+- Visual Studio project moved to the VS 2026 toolset (v145); `ReleaseV143` configurations added for Win32 and x64 (same as `Release`, built with the VS 2022 v143 toolset, MSVC 19.44) for Windows 7 compatibility. CMake requires Visual Studio 2022 or newer
 - AviSynth C API headers moved to `avisynth/` subfolder, mirroring the `vs/` layout for VapourSynth headers; `AVSInpaint.cpp` includes `"AvsLoader.h"`, which pulls in `"avisynth/avisynth_c.h"`
 - The `avs/` subdirectory (with `config.h`, `capi.h`, `types.h`, etc.) lives under `avisynth/avs/` and is unmodified SDK content, in sync with AviSynth+ upstream master
 - MSVC x64 CMake builds no longer use `AvsInPaint.def`: the `@4`-decorated aliases are a Win32-only (stdcall) artifact, on x64 the exports come from the `dllexport` attributes of the entry points
