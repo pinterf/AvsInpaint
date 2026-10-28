@@ -41,7 +41,7 @@ of an overlayed logo, the logo is removed where it is not
 opaque.</li>
 <li><b>Logo inpainting</b>: Opaque parts of the logo are
 interpolated. A fast method is used which has been
-published recently by
+published by
 Folkmar Bornemann and Tom M&auml;rz
 and which is roughly described
 <a href="#MathInpaint">below</a>.</li>
@@ -55,8 +55,13 @@ to provide smooth blending masks.
     </p>
     <p>
 
-This plugin is designed to work with Avisynth+ and AviSynth 2.6.
-Supported color spaces are (generally) RGB24, RGB32, YUY2, YV12, YV16, YV24, Y8.
+This plugin works with <b>Avisynth+</b>, classic <b>Avisynth 2.6</b> and <b>VapourSynth V4</b>.
+The front ends are independent: you need only the host you actually use.
+In classic Avisynth 2.6 load it with <code>LoadCPlugin</code>; planar RGB (RGBP, RGBAP)
+is available with Avisynth+ only.
+When used with VapourSynth, <b>VapourSynth V4</b> is required at runtime.
+Supported color spaces are (generally) RGB24, RGB32, RGBP, RGBAP, YUY2, YV12, YV16, YV24, Y8
+(Avisynth+); Gray, YUV, and RGB 8-bit formats (VapourSynth V4).
 
     </p>
    <h3>Terms and Conditions for Execution, Copying, Distribution and Modification</h3>
@@ -103,12 +108,36 @@ Supported color spaces are (generally) RGB24, RGB32, YUY2, YV12, YV16, YV24, Y8.
   <h2>Usage</h2>
    <h3>Loading the plugin</h3>
     <p>
-     You need the file
+     If not autoloaded, then on Windows you need the file
      <strong>AVSInpaint.dll</strong> in your working directory. To
      load the plugin, your script should start with
      the following line:
      <pre>
-LoadCPlugin("AVSInpaint.dll")</pre>
+LoadPlugin("AVSInpaint.dll")</pre>
+     Avisynth+ automatically detects C-interface plugins, so the plain
+     <code>LoadPlugin</code> call is sufficient.
+     The older <code>LoadCPlugin</code> syntax (used in pre-Avisynth+ scripts)
+     still works but is no longer necessary.
+    </p>
+    <p>
+     The same DLL also works as a VapourSynth V4 plugin.
+     Load it in Python with <code>core.std.LoadPlugin(r"AVSInpaint.dll")</code>
+     and call the functions as <code>core.avsinpaint.InpaintLogo(...)</code>,
+     <code>core.avsinpaint.AnalyzeLogo(...)</code>,
+     <code>core.avsinpaint.DeblendLogo(...)</code>, and
+     <code>core.avsinpaint.DistanceFunction(...)</code>.
+    </p>
+   <h3>Demo scripts</h3>
+    <p>
+     Each AviSynth demo in the <i>Documentation</i> folder has a VapourSynth
+     twin of the same name (<code>.avs</code> / <code>.vpy</code>):
+     <ul>
+      <li><i>Demo</i> &mdash; the original 2008 analyze/deblend/inpaint workflow (RGB24).</li>
+      <li><i>Demo_YUV</i> &mdash; the same workflow with a YUV (YV12 / YUV420P8) clip.</li>
+      <li><i>Demo2</i> &mdash; <code>InpaintLogo</code>.</li>
+      <li><i>Demo2_Deblend</i> &mdash; <code>DeblendLogo</code>.</li>
+      <li><i>Demo2_DistanceFunction</i> &mdash; <code>DistanceFunction</code>.</li>
+     </ul>
     </p>
    <h3>Inpaint Function</h3>
     <p>
@@ -141,7 +170,7 @@ information about the directions of isophotes near that pixel.
 
 <var>Clip</var> is the damaged source clip. All color spaces
 are allowed. If no <var>Mask</var> is provided, the source
-clip must be RGB32 and the alpha channel is used as mask
+clip must be RGB32 or RGBAP and the alpha channel is used as mask
 (see <var>Mask</var> for details).
 Otherwise all color channels of <var>Clip</var> will be
 inpainted.
@@ -154,7 +183,7 @@ clip.
 <var>Mask</var> defines the parts of the video which will be
 treated by the plugin.
 This clip may either have a YUV colorspace (the Y channel is
-used) or RGB32 (the alpha channel is used).
+used) or an alpha channel (RGB32 or RGBAP &mdash; the alpha channel is used).
 All pixels of the source clip where this mask has values
 greater than 127 will be inpainted.
 The mask clip must have the same (spatial) dimensions as
@@ -270,9 +299,7 @@ determined by the distance of the pixels to the border of the
 inpainting region) are inpainted,
 all remaining pixels will be untouched. This
 is mainly usefull for visualizing how the function works and
-for debugging purposes. If <var>Steps</var> is less then -1,
-a copyright message will be displayed (along with an error
-message). (default: -1)
+for debugging purposes. (default: -1)
 
       </li>
      </ul>
@@ -282,14 +309,12 @@ message). (default: -1)
 If the mask is provided as a separate clip (<var>Mask</var>
 argument), <i>all</i> color channels available in the
 source <var>Clip</var> will be inpainted, <i>including</i>
-the alpha
-channel, it the source is RGB32. In most cases this is
+the alpha channel if the source is RGB32 or RGBAP. In most cases this is
 not desired since it needs additional CPU time, and information
 from the alpha channel is also used for inpainting the
-color channels
-which might tamper the results. To avoid this, use
-<code>ConvertToRGB24</code> first when working with RGB32
-clips.
+color channels which might tamper the results. To avoid this,
+use <code>ConvertToRGB24</code> when working with RGB32 clips,
+or <code>ConvertToPlanarRGB</code> when working with RGBAP clips.
 
     </p>
     <p>
@@ -308,22 +333,24 @@ returned.
    <th align=right width=1><var>Clip</var>:</th>
    <th>RGB24</th>
    <th>RGB32</th>
+   <th>RGBP</th>
+   <th>RGBAP</th>
    <th>YUY2 / YV12 / YV16 / YV24</th>
    <th>Y8</th>
   </tr>
  </thead>
  <tbody align=center>
   <tr>
-   <th colspan=2>RGB32 / YUY2 / YV12 / YV16 / YV24 / Y8</th>
-   <td>R,G,B</td><td>R,G,B,A</td><td>Y,U,V</td><td>Y</td>
+   <th colspan=2>RGB32 / RGBAP / YUY2 / YV12 / YV16 / YV24 / Y8</th>
+   <td>R,G,B</td><td>R,G,B,A</td><td>R,G,B</td><td>R,G,B,A</td><td>Y,U,V</td><td>Y</td>
   </tr>
   <tr>
    <th colspan=2>none</th>
-   <td></td><td>R,G,B</td><td></td><td></td>
+   <td></td><td>R,G,B</td><td></td><td>R,G,B</td><td></td><td></td>
   </tr>
  </tbody>
 </table>
-   
+
     </p>
     <p>
 
@@ -394,7 +421,8 @@ on how the algorithm works.
     <p>
      <code>DeblendLogo</code>(<var>clip Clip,
                                    clip Logo,
-                                   clip &quot;Alpha&quot;</var>)
+                                   clip &quot;Alpha&quot;,
+                                   string &quot;ChromaPlacement&quot;</var>)
     </p>
     <p>
 
@@ -420,21 +448,21 @@ same properties.
 <var>Logo</var> contains the logo you want to remove from
 the source clip.
 The logo may be moving, but a static logo (<var>Logo</var>
-<i>and</i> <var>Mask</var> having only one frame)
+<i>and</i> <var>Alpha</var> having only one frame)
 results in faster processing since
 some values can be pre-computed.
-If <var>Mask</var> is not provided, <var>Logo</var> must
-be RGB32, <var>Clip</var> RGB24, and the alpha channel is
-used as mask. Otherwise, <var>Logo</var> must have the same
-color space as <var>Clip</var>.
+<var>Logo</var> must have the same color space as <var>Clip</var>;
+for RGB clips any combination of RGB24, RGB32, RGBP and RGBAP is allowed.
+If <var>Alpha</var> is not provided, <var>Logo</var> must
+be RGB32 or RGBAP and its alpha channel is used as the alpha mask.
 
       </li>
       <li>
 
-<var>Mask</var> contains the transparency mask of the logo you
+<var>Alpha</var> contains the transparency mask of the logo you
 want to remove.
 This clip may either have a YUV colorspace (the Y channel is
-used) or RGB32 (the alpha channel is used).
+used) or an alpha channel (RGB32 or RGBAP &mdash; the alpha channel is used).
 Pixel values of 0 mean <i>full transparency</i> (the source
 clip is returned unchanged here), values of 255 means
 <i>full opacity</i> (the logo cannot be deblended in these
@@ -445,49 +473,104 @@ do not forget to add
 to the converting function when converting RGB masks to YUV.
 
       </li>
+      <li>
+
+<var>ChromaPlacement</var> tells where the chroma samples of a
+subsampled YUV clip (YV12, YV16, YUY2) sit relative to the luma samples.
+The alpha mask is given in full (luma) resolution; for the chroma
+planes it is downsampled at the chroma sample positions.
+If this does not match the way the chroma was created, faint outlines of
+the logo remain in the chroma near sharp alpha edges.
+Allowed values (as for AviSynth's <code>ConvertToYV12</code> and its
+<var>ChromaOutPlacement</var>):
+<code>&quot;left&quot;</code> (or <code>&quot;MPEG2&quot;</code>),
+<code>&quot;center&quot;</code> (or <code>&quot;MPEG1&quot;</code>, <code>&quot;jpeg&quot;</code>),
+<code>&quot;top_left&quot;</code>, <code>&quot;top&quot;</code>,
+<code>&quot;bottom_left&quot;</code>, <code>&quot;bottom&quot;</code>,
+<code>&quot;DV&quot;</code> and <code>&quot;auto&quot;</code>.
+<code>&quot;auto&quot;</code> takes the <code>_ChromaLocation</code> frame
+property of the first frame of <var>Clip</var>, and falls back to
+<code>&quot;left&quot;</code>, the usual siting of digital video and the
+default of AviSynth's converters.
+For 4:2:2 only the horizontal part matters. It has no effect on
+RGB, YV24 and Y8 clips.
+<code>&quot;center&quot;</code> uses the plain block average, as versions
+before 1.4 did.
+(default: <code>&quot;auto&quot;</code>)
+
+      </li>
      </ul>
     </p>
     <p>
 
-The following table shows which combinations of color spaces
+The following tables show which combinations of color spaces
 are allowed and which color channels will be deblended and
-returned.
+returned. Channels not listed are returned unchanged.
+    </p>
+    <p>
+With a separate <var>Alpha</var> clip (YUY2, YV12, YV16, YV24, Y8 &mdash; luma is used &mdash;
+or RGB32, RGBAP &mdash; alpha is used):
     </p>
     <p align=center>
 
 <table>
  <thead>
   <tr>
-   <th colspan=2 align=right><var>Mask</var>:</th>
-   <th colspan=3>YUY2 / YV12 / YV16 / YV24 / Y8 / RGB32</th>
-   <th colspan=3>none</th>
-  </tr>
-  <tr>
    <th align=left><var>Clip</var></th><th align=right width=1><var>Logo</var>:</th>
-   <th>RGB24</th><th>RGB32</th><th>YUY2 / YV12 / YV16 / YV24 / Y8</th>
-   <th>RGB24</th><th>RGB32</th><th>YUY2 / YV12 / YV16 / YV24 / Y8</th>
+   <th>RGB24 / RGBP</th><th>RGB32 / RGBAP</th><th>YUV (same as <var>Clip</var>)</th>
   </tr>
  </thead>
  <tbody align=center>
   <tr>
-   <th colspan=2>RGB24</th>
-   <td>R,G,B</td><td></td><td></td><td></td><td>R,G,B</td><td></td>
+   <th colspan=2>RGB24 / RGBP</th>
+   <td>R,G,B</td><td>R,G,B</td><td></td>
   </tr>
   <tr>
-   <th colspan=2>RGB32</th>
-   <td></td><td>R,G,B,A</td><td></td><td colspan=3></td>
+   <th colspan=2>RGB32 / RGBAP</th>
+   <td>R,G,B</td><td>R,G,B,A</td><td></td>
   </tr>
   <tr>
    <th colspan=2>YUY2 / YV12 / YV16 / YV24</th>
-   <td></td><td></td><td>Y,U,V</td><td colspan=3></td>
+   <td></td><td></td><td>Y,U,V</td>
   </tr>
   <tr>
    <th colspan=2>Y8</th>
-   <td></td><td></td><td>Y</td><td colspan=3></td>
+   <td></td><td></td><td>Y</td>
   </tr>
  </tbody>
 </table>
 
+    </p>
+    <p>
+Without <var>Alpha</var> (the alpha channel of <var>Logo</var> is used):
+    </p>
+    <p align=center>
+
+<table>
+ <thead>
+  <tr>
+   <th align=left><var>Clip</var></th><th align=right width=1><var>Logo</var>:</th>
+   <th>RGB32 / RGBAP</th>
+  </tr>
+ </thead>
+ <tbody align=center>
+  <tr>
+   <th colspan=2>RGB24 / RGB32 / RGBP / RGBAP</th>
+   <td>R,G,B</td>
+  </tr>
+  <tr>
+   <th colspan=2>YUY2 / YV12 / YV16 / YV24 / Y8</th>
+   <td>not allowed</td>
+  </tr>
+ </tbody>
+</table>
+
+    </p>
+    <p>
+In VapourSynth only the planar formats apply: packed RGB (RGB24, RGB32) and
+YUY2 do not exist there, and there are no formats with an alpha channel
+(no RGBAP), so <var>Alpha</var> must always be given as a separate clip and
+the second table does not apply.
     </p>
    <h3>Analyze Function</h3>
     <p>
@@ -495,7 +578,8 @@ returned.
                                    clip &quot;Mask&quot;,
                                    bool &quot;ComputeAlpha&quot;,
                                    float &quot;DeviationWeight&quot;,
-                                   float &quot;SubsamplingWeight&quot;</var>)
+                                   float &quot;SubsamplingWeight&quot;,
+                                   string &quot;ChromaPlacement&quot;</var>)
     </p>
     <p>
 
@@ -513,15 +597,14 @@ and opaque parts with <code>InpaintLogo</code>.
 <var>Clip</var> is the source clip containing the logo to be
 analyzed. This clip may have any color space.
 If <var>Mask</var> is not provided, <var>Clip</var> must
-be RGB32 and the alpha channel is
-used as mask.
+be RGB32 or RGBAP and the alpha channel is used as mask.
 In general the resulting clip will have the same properties
-of the source clip except being twice as high: The upper part
+as the source clip except being twice as high: The upper part
 contains the color image of the logo, the lower part the
 alpha mask. If no separate mask is provided (the mask being
 the alpha channel of the source clip), the resulting clip
-will also be a RGB32 clip with the same hight and the
-logo alpha mask being placed in the alpha channel.
+has the same height as the source and the same color space
+(RGB32 or RGBAP), with the logo alpha mask placed in the alpha channel.
 
       </li>
       <li>
@@ -529,7 +612,7 @@ logo alpha mask being placed in the alpha channel.
 <var>Mask</var> defines the parts of the video where the logo
 is suspected to be. This clip may either have a
 YUV colorspace (the Y channel of the first frame is used)
-or RGB32 (the alpha channel of the first frame is used).
+or an alpha channel (RGB32 or RGBAP &mdash; the alpha channel of the first frame is used).
 All pixels of the source clip where this mask has values
 greater than 127 will be treated as
 &ldquo;possibly damaged by the logo&rdquo;,
@@ -568,9 +651,17 @@ value is weighted with itself) and of the degree of
 subsampling (0.5 for YUY2 and YV16, 0.25 for YV12) of each channel.
 These arguments define the exponents of those factors &mdash;
 0.0 means the weight is not used at all.
-A negative value for one of these arguments will show a
-copyright message (along with an error message).
 (default: 0.5 for both)
+
+      </li>
+      <li>
+
+<var>ChromaPlacement</var> is the chroma siting of a subsampled
+YUV source clip, as for <code>DeblendLogo</code>. It is used to
+downsample the mask and the alpha estimate for the chroma channels.
+Use the same value for <code>AnalyzeLogo</code> and
+<code>DeblendLogo</code>.
+(default: <code>&quot;auto&quot;</code>)
 
       </li>
      </ul>
@@ -580,13 +671,12 @@ copyright message (along with an error message).
 If the mask is provided as separate clip (<var>Mask</var>
 argument), <i>all</i> color channels available in the
 source clip will be analyzed, <i>including</i> the alpha
-channel of an RGB32 clip. In most cases this is
+channel of an RGB32 or RGBAP clip. In most cases this is
 not desired since it needs additional CPU time, and information
 from the alpha channel is also used for estimating the
 overall alpha values.
-To avoid this, use
-<code>ConvertToRGB24</code> first when working with RGB32
-clips.
+To avoid this, use <code>ConvertToRGB24</code> when working with RGB32 clips,
+or <code>ConvertToPlanarRGB</code> when working with RGBAP clips.
 
     </p>
     <p>
@@ -605,18 +695,20 @@ a <var>Mask</var> is provided.
    <th align=right width=1><var>Clip</var>:</th>
    <th>RGB24</th>
    <th>RGB32</th>
+   <th>RGBP</th>
+   <th>RGBAP</th>
    <th>YUY2 / YV12 / YV16 / YV24</th>
    <th>Y8</th>
   </tr>
  </thead>
  <tbody align=center>
   <tr>
-   <th colspan=2>RGB32 / YUY2 / YV12 / YV16 / YV24 / Y8</th>
-   <td>R,G,B</td><td>R,G,B,A</td><td>Y,U,V</td><td>Y</td>
+   <th colspan=2>RGB32 / RGBAP / YUY2 / YV12 / YV16 / YV24 / Y8</th>
+   <td>R,G,B</td><td>R,G,B,A</td><td>R,G,B</td><td>R,G,B,A</td><td>Y,U,V</td><td>Y</td>
   </tr>
   <tr>
    <th colspan=2>none</th>
-   <td></td><td>R,G,B</td><td></td><td></td>
+   <td></td><td>R,G,B</td><td></td><td>R,G,B</td><td></td><td></td>
   </tr>
  </tbody>
 </table>
@@ -624,15 +716,16 @@ a <var>Mask</var> is provided.
     </p>
     <p>
 
-As with <code>InpaintLogo</code>, there is a problem with
-subsampled chroma channels. The alpha mask values of two (luma)
-pixels with highly different alpha values which share a common
-chroma pixel cannot be reliably estimated from thier chroma
-channel values. This effect usually produces some dirt in the
-estimated alpha mask and subsequently in the color mask.
-Such effects, when observed, can be avoided (besides by
-converting to RGB24) by increasing the
-<var>SubsamplingWeight</var>.
+As with <code>InpaintLogo</code>, subsampled chroma channels
+(YV12, YV16, YUY2) need special care: two (luma) pixels with
+very different alpha values may share a common chroma pixel.
+Since version 1.4 the alpha estimate is computed in full (luma)
+resolution, and the chroma channels only correct its average over
+each chroma block (taking <var>ChromaPlacement</var> into account).
+The estimated alpha mask therefore keeps sharp edges, and the result is
+close to that of a YV24 clip. If some dirt is still observed in the
+estimated alpha mask, increasing <var>SubsamplingWeight</var> reduces
+the influence of the chroma channels further.
 
     </p>
     <p>
@@ -666,8 +759,10 @@ of binary masks.
       <li>
 
 <var>Clip</var> is the source clip. This clip must either be
-a YUV clip, or RGB32. For YUV clips, only the Y channel will
-be altered, for RGB32 clips the alpha channel will be changed.
+a YUV clip, or have an alpha channel (RGB32 or RGBAP). For YUV clips, only the Y channel will
+be altered; for RGB32 and RGBAP clips the alpha channel will be changed.
+Under VapourSynth V4, only Gray and YUV clips are accepted; RGB is not supported because
+VapourSynth has no RGBA format and a plain RGB clip has no alpha channel to operate on.
 
       </li>
       <li>
@@ -697,13 +792,85 @@ with a resolution of 720x576, one would use
 <code><var>PixelAspect</var>=(16.0/9.0)*(576.0/720.0)</code>&asymp;1.422.
 The result of this function is distorted according
 to this value.
-A negative value will show a
-copyright message (along with an error message).
 (default: 1.0)
 
       </li>
      </ul>
     </p>
+   <h3>VapourSynth V4 Notes</h3>
+    <p>
+
+All four functions are available under VapourSynth V4 with the following differences
+from the AviSynth behavior.
+
+    </p>
+    <p>
+     <ul>
+      <li>
+
+<b>8-bit integer formats only.</b>
+Not a difference, but we must mention that clips with 10-, 12-, 16-bit or float 
+sample types are not supported.
+
+      </li>
+      <li>
+
+<b>Supported color families: Gray, YUV, RGB.</b>
+All three VapourSynth color families are accepted for
+<code>InpaintLogo</code>, <code>AnalyzeLogo</code>, and <code>DeblendLogo</code>.
+VapourSynth RGB clips carry three planes (R, G, B) with no alpha plane,
+so there is no RGBAP equivalent.
+Note also that VapourSynth RGB is <i>planar</i> and stored top-down, while
+AviSynth's packed RGB24/RGB32 is stored bottom-up. The AviSynth version of
+the plugin compensates for that when it combines a packed RGB source with a
+mask of a different layout; in VapourSynth no such handling is needed.
+
+      </li>
+      <li>
+
+<b>Mask clip is always required.</b>
+VapourSynth has no embedded-alpha format, so the embedded-alpha shorthand
+(omitting the <var>Mask</var> argument for RGB32/RGBAP sources in AviSynth) is not available.
+The <var>mask</var> argument must always be supplied for <code>InpaintLogo</code>
+and <code>AnalyzeLogo</code>.
+The mask clip may be any 8-bit color family; plane&nbsp;0 is used
+(luma for YUV, gray value for Gray, or R-plane for RGB &mdash;
+passing a Gray clip is recommended for clarity).
+<b>Mind the plane:</b> in AviSynth an RGB32/RGBAP mask carries the mask in its
+alpha channel (see <var>Mask</var> above), in VapourSynth an RGB mask carries
+it in the R plane. Same argument position, different plane &mdash; a Gray mask
+avoids the question altogether.
+
+      </li>
+      <li>
+
+<b>DeblendLogo: alpha clip is always required.</b>
+Because VapourSynth RGB clips have no embedded alpha plane, the
+<var>alpha</var> clip must always be provided.
+As with the mask, plane&nbsp;0 of the alpha clip carries the alpha; in
+AviSynth an RGB32 alpha clip would provide its alpha channel instead.
+The logo clip can therefore never supply the alpha itself.
+
+      </li>
+      <li>
+
+<b>chromaplacement</b> (<code>AnalyzeLogo</code>, <code>DeblendLogo</code>)
+works as in AviSynth; the names are case-insensitive.
+<code>&quot;auto&quot;</code> reads <code>_ChromaLocation</code>, which the
+<code>resize</code> functions set when converting to YUV.
+
+      </li>
+      <li>
+
+<b>DistanceFunction: Gray and YUV only.</b>
+RGB clips are rejected because VapourSynth provides no RGBA format,
+leaving no alpha channel to operate on.
+Convert to a Gray clip first if needed.
+
+      </li>
+     </ul>
+    </p>
+
    <h3>Sample Script</h3>
     <p>
 
@@ -931,14 +1098,6 @@ logo pixel and <span id=math>&alpha;</span> the corresponding
 alpha mask value, all in the interval [0,255].
 Then the blended pixel value <span id=math>y</span> is:
 <div id=math>y = <b>(</b> &alpha;c+(255-&alpha;)x <b>) / </b>255</div>
-(Please note that this is <i>not</i> the formula used by
-<code>Layer</code>. Layer uses
-<span id=math>x+(c-x)&times;(256&alpha;)/256/256</span>
-in AviSynth 2.56 and
-<span id=math>x+(c-x)&times;(257&alpha;+1)/256/256</span>
-in AviSynth 2.57 (see the Layer help page and
-<a href="http://sourceforge.net/tracker/index.php?func=detail&aid=1637764&group_id=57023&atid=482673">Bug 1637764</a>
-for details).)
 
     </p>
     <p>
@@ -1180,13 +1339,13 @@ finding the smallest element easy
   <h2>Version History</h2>
    <table>
     <tr valign="top">
-     <td>2008.01.06</td>
+     <td>20080106</td>
      <td>
       Initial Version
      </td>
     </tr>
     <tr valign="top">
-     <td>2008.02.23</td>
+     <td>20080223</td>
      <td>
       <ul>
        <li><b><i>AviSynth_C.dll</i> is not needed anymore (I updated MinGW (see the makefile) &mdash; thanks to Fizick).</b></li>
@@ -1197,7 +1356,7 @@ finding the smallest element easy
      </td>
     </tr>
     <tr valign="top">
-     <td>20190624 1.1 (pinterf)</td>
+     <td>20190624 1.1 (<a href="https://github.com/pinterf">pinterf</a>)</td>
      <td>
       <ul>
        <li>Fix crash in AVSInpaint-2008.02.23, when using mode "Deblend" or "Both"<br />(double frame release, revealed when using Avisynth+)</li>
@@ -1209,23 +1368,80 @@ finding the smallest element easy
      </td>
     </tr>
     <tr valign="top">
-     <td>20190705 1.2</td>
+     <td>20190705 1.2 (<a href="https://github.com/pinterf">pinterf</a>)</td>
      <td>
       <ul>
-       <li>- Fix broken compatibility with Avisynth 2.6 (remove underscore from dll export)</li>
+       <li>Fix broken compatibility with Avisynth 2.6 (remove underscore from dll export)</li>
       </ul>
      </td>
     </tr>
     <tr valign="top">
-     <td>20211025 1.3</td>
+     <td>20211025 1.3 (<a href="https://github.com/pinterf">pinterf</a>)</td>
      <td>
       <ul>
-       <li>- fix: InpaintDelogo: stuck for large (e.g. 1920x1080) frame sizes: Fast Marching process did not converge.</li>
-       <li>- Add YV16, YV24 and Y8 color spaces</li>
+       <li>Fix: <code>InpaintLogo</code>: stuck for large (e.g. 1920x1080) frame sizes &mdash; Fast Marching process did not converge.</li>
+       <li>Add YV16, YV24, and Y8 color spaces.</li>
+      </ul>
+     </td>
+    </tr>
+    <tr valign="top">
+     <td>20261028 1.4 (<a href="https://github.com/pinterf">pinterf</a>)</td>
+     <td>
+      <ul>
+       <li>Works with <b>Avisynth+</b> and classic <b>Avisynth 2.6</b> (<code>LoadCPlugin</code>).
+           Planar RGB and frame properties are used only when the host provides them; no newer
+           interface version is needed (frame properties are copied by <code>avs_make_writable</code>).</li>
+       <li><b>AviSynth loaded at runtime (no link-time dependency).</b>
+           <code>AvsLoader.cpp</code> / <code>AvsLoader.h</code> use <code>LoadLibrary</code>/<code>dlopen</code>
+           to resolve AviSynth symbols on demand. The DLL can be installed in a VapourSynth-only
+           environment without AviSynth present; no <code>AviSynth.lib</code> /
+           <code>libAviSynth.so</code> is needed at build time.</li>
+       <li><code>avisynth_c_plugin_init2</code> entry point exported (Avisynth+ &ge;&nbsp;3.7.4,
+           V11): signals to the host that the plugin accepts <code>int64</code>/<code>double</code>
+           natively in <code>AVS_Value</code>; sets <code>g_is_v11_64bit_data_capable_host</code>
+           for future use.</li>
+       <li><b>VapourSynth V4 support.</b>
+           All four functions available via <code>core.avsinpaint.*</code> in the same DLL.
+           Supported: Gray, YUV, and RGB 8-bit formats; mask clip always required.</li>
+       <li><b>New color spaces:</b> RGBP and RGBAP (planar RGB / planar RGBA) added to
+           <code>InpaintLogo</code>, <code>AnalyzeLogo</code>, <code>DeblendLogo</code>,
+           and <code>DistanceFunction</code>.</li>
+       <li><b>Source converted from C to C++17</b> and fully refactored:
+           all dynamic memory replaced with RAII (<code>std::vector</code>),
+           C-style casts and raw pointers eliminated, algorithm core decoupled from
+           the AviSynth API to enable the dual AVS/VS4 wrapper architecture.</li>
+       <li><b>Performance improvements</b> in the inpainting and mask-preparation
+           hot paths.</li>
+       <li><b>Cross-platform build:</b> CMakeLists.txt added; builds on Linux
+           and macOS with GCC or Clang in addition to Windows (MSVC, ClangCL, MinGW).</li>
+       <li>RelWithDebInfo and ClangCL build configurations added to the Visual Studio solution.</li>
+       <li><b>Much better quality on subsampled YUV (YV12/YV16/YUY2)</b>: deblending a logo
+           (<code>AnalyzeLogo</code> + <code>DeblendLogo</code>) used to leave clearly visible
+           logo/letter outlines on 4:2:0 and 4:2:2 clips. These are gone, and the result is now
+           close to that of YV24/RGB (demo, YV12: mean luma error 3.68&nbsp;&rarr;&nbsp;2.42,
+           maximum 99&nbsp;&rarr;&nbsp;19; YV24: 2.34, maximum 19).
+           <ul>
+            <li><b>New argument</b> <code>ChromaPlacement</code> for <code>AnalyzeLogo</code> and
+                <code>DeblendLogo</code>: the alpha mask is downsampled at the real chroma sample
+                positions instead of a plain block average. The default <code>&quot;auto&quot;</code>
+                uses <code>_ChromaLocation</code>, or <code>&quot;left&quot;</code> (MPEG-2) if it
+                is not set. <code>&quot;center&quot;</code> uses the plain block average, as
+                earlier versions did.</li>
+            <li><code>AnalyzeLogo</code>: the alpha estimate no longer spreads the per-block
+                chroma result over every luma pixel of the block; the chroma channels only
+                correct the block average of the full-resolution estimate, so the alpha keeps
+                its sharp edges.</li>
+           </ul>
+           <b>The results of subsampled YUV clips change</b> (for every
+           <var>ChromaPlacement</var>, including <code>&quot;center&quot;</code>);
+           RGB, YV24 and Y8 results are unchanged.</li>
+       <li>New demo <i>Demo_YUV</i> (the original demo with a YUV clip); every <i>.avs</i>
+           demo has a VapourSynth <i>.vpy</i> twin.</li>
       </ul>
      </td>
     </tr>
    </table>
-  <div align=right><i><font size=-2>Wolfgang Boiger</font></i></div>
+  <div align=right><i><font size=-2>Wolfgang Boiger<br>
+  Ferenc Pint&eacute;r</font></i></div>
  </body>
 </html>
