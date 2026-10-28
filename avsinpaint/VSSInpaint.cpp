@@ -1169,7 +1169,7 @@ VS_EXTERNAL_API(void)  VapourSynthPluginInit2(VSPlugin *  plugin,  const VSPLUGI
 {
   vspapi->configPlugin("info.avisynth.avsinpaint", "avsinpaint",
     "Logo Inpainting for VapourSynth",
-    VS_MAKE_VERSION(1, 3), VAPOURSYNTH_API_VERSION, 0, plugin);
+    VS_MAKE_VERSION(1, 4), VAPOURSYNTH_API_VERSION, 0, plugin);
 
   vspapi->registerFunction("InpaintLogo",
     "clip:vnode;mask:vnode;"

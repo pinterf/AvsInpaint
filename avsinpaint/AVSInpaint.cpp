@@ -2,6 +2,7 @@
  This file is part of
         Logo Inpainting for AviSynth by Wolfgang Boiger
  Copyright (C)  2007, 2008  Wolfgang Boiger, Berlin
+ Additional work (C) 2019-2026 by Ferenc Pintér
 
  This program is free software; you can redistribute it and/or
  modify it under the terms of the GNU General Public License
@@ -40,8 +41,8 @@
 
 //#define  VersionString  "2008.02.23"
 //#define  VersionString  "2019.06.27 1.2"
-#define  VersionString  "2021.10.25 1.3"
-//#define  LegalInfoString  "* Logo Inpainting for AviSynth by Wolfgang Boiger *\nVersion " VersionString " ;  built  " __DATE__ "  " __TIME__ " .\nCopyright (C)  2007, 2008  Wolfgang Boiger, Berlin.\nLicensed under GNU GPL version 2 with possible geographic restrictions.\nThis software comes without any warranty, even without warranty\nof merchantability or fitness for a particular purpose.\nSee files 'AVSInpaint.htm' and 'GNUGPLv2.txt' for details."
+//#define  VersionString  "2021.10.25 1.3"
+#define  VersionString  "2026.10.28 1.4"
 
 
 constexpr int  FMMHeapDelta  = 8;  /* If heap size needs to be increased (= reallocation of memory), how many elemnts to add */
